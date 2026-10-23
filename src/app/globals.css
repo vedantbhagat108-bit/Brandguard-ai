@@ -1,0 +1,134 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --canvas: #f5f6fb;
+}
+
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: theme("colors.line");
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    @apply bg-canvas text-ink-900 antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    background-image:
+      radial-gradient(900px 480px at 88% -12%, rgba(117, 97, 244, 0.075), transparent 62%),
+      radial-gradient(640px 380px at 2% 2%, rgba(60, 201, 141, 0.045), transparent 55%);
+    background-attachment: fixed;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.018em;
+  }
+
+  ::selection {
+    background: #c9cdff;
+    color: #0c0f20;
+  }
+
+  mark {
+    background: transparent;
+    color: inherit;
+  }
+
+  :focus-visible {
+    scroll-margin: 96px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .skip-link {
+    @apply fixed left-4 top-4 z-[200] -translate-y-24 rounded-xl bg-ink-950 px-4 py-2.5 text-sm font-semibold text-white shadow-lift transition focus:translate-y-0;
+  }
+
+  .skeleton {
+    @apply relative overflow-hidden rounded-lg bg-ink-100/80;
+  }
+
+  .skeleton::after {
+    content: "";
+    @apply absolute inset-0 -translate-x-full animate-shimmer;
+    background-image: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.65),
+      transparent
+    );
+  }
+
+  .kbd {
+    @apply inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-line bg-white px-1 font-mono text-[10px] font-medium text-ink-400 shadow-sm;
+  }
+
+  .content-body {
+    @apply text-[15px] leading-[1.9] text-ink-700 sm:text-base;
+    font-feature-settings: "cv02", "cv03";
+  }
+
+  .demo-grid {
+    background-image:
+      linear-gradient(to right, rgba(255, 255, 255, 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(255, 255, 255, 0.045) 1px, transparent 1px);
+    background-size: 26px 26px;
+  }
+
+  .scrollbar-slim {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(98, 107, 137, 0.28) transparent;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    background: rgba(98, 107, 137, 0.25);
+  }
+
+  .scrollbar-slim::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+    background-image: none;
+  }
+
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+}
