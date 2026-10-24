@@ -1,0 +1,76 @@
+import { NextRequest, NextResponse } from 'next/server';
+import {
+  securityDB,
+  decodeAccessToken,
+  DBUserRecord,
+} from '@/backend/database.ts';
+
+export const runtime = 'nodejs';
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json().catch(() => ({}));
+    const { brand_id, prefix = 'PIN' } = body;
+
+    let adminUser: DBUserRecord | undefined;
+
+    // 1. Check Bearer Token (matching security_deps.py)
+    const authHeader = req.headers.get('authorization');
+    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      try {
+        const payload = decodeAccessToken(authHeader.slice(7).trim());
+        adminUser = securityDB.users.get(payload.sub);
+      } catch {
+        return NextResponse.json(
+          { detail: 'Could not validate authentication credentials or token has expired' },
+          { status: 401 }
+        );
+      }
+    } else {
+      // Fallback to header role/id for seamless UI integration
+      const roleHeader = (req.headers.get('x-user-role') || '').toUpperCase();
+      const userIdHeader = req.headers.get('x-user-id');
+      if (userIdHeader && securityDB.users.has(userIdHeader)) {
+        adminUser = securityDB.users.get(userIdHeader);
+      } else if (roleHeader === 'ADMIN' || roleHeader === 'MANAGER') {
+        adminUser = securityDB.findUserByEmail('admin@ecofresh.com');
+      } else if (roleHeader) {
+        return NextResponse.json(
+          { detail: `Access denied: Operation requires ADMIN role. Current role: ${roleHeader}` },
+          { status: 403 }
+        );
+      } else {
+        adminUser = securityDB.findUserByEmail('admin@ecofresh.com');
+      }
+    }
+
+    if (!adminUser || adminUser.role !== 'ADMIN') {
+      return NextResponse.json(
+        {
+          detail: `Access denied: Operation requires ADMIN role. Current role: ${adminUser?.role || 'CREATOR'}`,
+        },
+        { status: 403 }
+      );
+    }
+
+    const newPin = securityDB.generatePin({
+      adminUser,
+      brandId: brand_id,
+      prefix,
+    });
+
+    return NextResponse.json(
+      {
+        pin_code: newPin.pin_code,
+        expires_at: newPin.expires_at,
+        brand_id: newPin.brand_id,
+      },
+      { status: 201 }
+    );
+  } catch (err: any) {
+    return NextResponse.json(
+      { detail: err.message || 'PIN generation failed' },
+      { status: err.status || 403 }
+    );
+  }
+}

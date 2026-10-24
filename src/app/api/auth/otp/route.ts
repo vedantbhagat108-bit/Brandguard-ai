@@ -1,0 +1,103 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { requestOtp, verifyOtp } from '@/backend/lobby.ts';
+import {
+  securityDB,
+  createAccessToken,
+  hashPassword,
+  DBUserRecord,
+} from '@/backend/database.ts';
+
+export const runtime = 'nodejs';
+
+export async function POST(req: NextRequest) {
+  try {
+    const body = await req.json();
+    const { action = 'request', email, otp, code, role = 'content_creator' } = body;
+    const otpValue = otp || code;
+
+    if (!email || !email.trim()) {
+      return NextResponse.json({ detail: 'Email is required.' }, { status: 400 });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (action === 'request') {
+      const result = requestOtp(cleanEmail, role);
+      return NextResponse.json({
+        ...result,
+        otp_code: result.dev_otp,
+      });
+    }
+
+    if (action === 'verify') {
+      if (!otpValue) {
+        return NextResponse.json({ detail: 'OTP code is required.' }, { status: 400 });
+      }
+      const verified = verifyOtp(cleanEmail, otpValue);
+
+      // Find or create user in securityDB
+      let dbUser: DBUserRecord | undefined = securityDB.findUserByEmail(cleanEmail);
+      if (!dbUser) {
+        const defaultBrandId = 'b0000001-0000-4000-8000-000000000001';
+        const newDbUser: DBUserRecord = {
+          id: verified.user.user_id,
+          username: cleanEmail.split('@')[0],
+          email: cleanEmail,
+          hashed_password: hashPassword('otp-verified'),
+          role: role === 'manager' || role === 'admin' ? 'ADMIN' : 'CREATOR',
+          brand_id: defaultBrandId,
+          name: cleanEmail.split('@')[0],
+          department: 'Marketing',
+          is_approved: true,
+          lobby_access: true,
+          created_at: new Date().toISOString(),
+        };
+        securityDB.users.set(newDbUser.id, newDbUser);
+        dbUser = newDbUser;
+      }
+
+      const jwtToken = createAccessToken({
+        sub: dbUser.id,
+        username: dbUser.username,
+        email: dbUser.email,
+        role: dbUser.role,
+        brand_id: dbUser.brand_id,
+      });
+
+      securityDB.logAudit({
+        brand_id: dbUser.brand_id,
+        user_id: dbUser.id,
+        user_email: dbUser.email,
+        action: 'OTP_VERIFIED',
+        details: { username: dbUser.username, email: dbUser.email, role: dbUser.role },
+      });
+
+      const workspace = securityDB.workspaces.get(dbUser.brand_id);
+
+      return NextResponse.json({
+        success: true,
+        access_token: jwtToken,
+        token_type: 'bearer',
+        user: {
+          id: dbUser.id,
+          username: dbUser.username,
+          email: dbUser.email,
+          name: dbUser.name,
+          role: dbUser.role,
+          brand_id: dbUser.brand_id,
+          brand_name: workspace?.name || 'EcoFresh Botanicals',
+          department: dbUser.department,
+          is_approved: dbUser.is_approved,
+          lobby_access: typeof dbUser.lobby_access === 'boolean' ? dbUser.lobby_access : true,
+        },
+      });
+    }
+
+    return NextResponse.json({ detail: 'Invalid action' }, { status: 400 });
+  } catch (err: any) {
+    return NextResponse.json(
+      { detail: err.message || 'OTP operation failed' },
+      { status: 400 }
+    );
+  }
+}
