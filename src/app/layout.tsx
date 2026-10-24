@@ -5,12 +5,17 @@ import { AppShell } from "@/components/layout/app-shell";
 
 export const metadata: Metadata = {
   title: {
-    default: "BrandLens AI — Pre-publication brand review",
-    template: "%s · BrandLens AI",
+    default: "BrandGuard AI - Two-RAG Brand Governance Backend",
+    template: "%s · BrandGuard AI",
   },
   description:
-    "An explainable, human-in-the-loop workspace for checking content against approved brand guidelines, facts and disclosures.",
-  applicationName: "BrandLens AI",
+    "High-assurance enterprise Two-RAG backend for brand compliance, unsupported-claim detection, hybrid pgvector retrieval, and automated review packages.",
+  applicationName: "BrandGuard AI",
+  openGraph: {
+    title: "BrandGuard AI - Two-RAG Brand Governance Backend",
+    description:
+      "High-assurance enterprise Two-RAG backend for brand compliance, unsupported-claim detection, hybrid pgvector retrieval, and automated review packages.",
+  },
 };
 
 export const viewport: Viewport = {

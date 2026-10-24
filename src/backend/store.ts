@@ -315,4 +315,12 @@ export class HybridVectorStore {
   }
 }
 
-export const store = new HybridVectorStore();
+const globalForVectorStore = globalThis as unknown as {
+  hybridVectorStore?: HybridVectorStore;
+};
+
+if (!globalForVectorStore.hybridVectorStore) {
+  globalForVectorStore.hybridVectorStore = new HybridVectorStore();
+}
+
+export const store = globalForVectorStore.hybridVectorStore;

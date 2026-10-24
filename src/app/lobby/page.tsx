@@ -501,7 +501,8 @@ export default function CollaborativeLobbyPage() {
       let computedScore = activeLobby.last_score ?? 88;
       if (analyzeRes.ok) {
         const reviewResult = await analyzeRes.json();
-        computedScore = reviewResult.overall_score ?? computedScore;
+        computedScore =
+          reviewResult.score ?? reviewResult.overall_score ?? computedScore;
         setLiveAuditFindings(reviewResult.findings || []);
       }
 
@@ -1281,32 +1282,37 @@ export default function CollaborativeLobbyPage() {
                     <Sparkles className="h-3.5 w-3.5 text-amber-600" />
                     Live Two-RAG Findings ({liveAuditFindings.length})
                   </h4>
-                  {liveAuditFindings.map((f: any, fIdx: number) => (
-                    <div key={f.id || `finding-${fIdx}`} className="rounded-lg bg-white p-3 border border-amber-200 text-xs">
-                      <div className="font-bold text-ink-900">{f.title}</div>
-                      <p className="text-ink-600 mt-0.5">{f.description}</p>
-                      {f.suggested_fix && (
-                        <div className="mt-2 flex items-center justify-between gap-2 bg-mint-50 px-2.5 py-1.5 rounded border border-mint-200">
-                          <span className="text-mint-900 font-medium">
-                            Suggested Fix: &ldquo;{f.suggested_fix}&rdquo;
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              if (f.matched_excerpt && draftContent.includes(f.matched_excerpt)) {
-                                setDraftContent(draftContent.replace(f.matched_excerpt, f.suggested_fix));
-                              } else {
-                                setDraftContent(f.suggested_fix);
-                              }
-                            }}
-                            className="rounded bg-mint-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-mint-500 shrink-0"
-                          >
-                            Apply Fix
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                  {liveAuditFindings.map((f: any, fIdx: number) => {
+                    const desc = f.explanation || f.description || "";
+                    const fix = f.suggestedFix || f.suggested_fix || "";
+                    const excerpt = f.evidence || f.matched_excerpt || "";
+                    return (
+                      <div key={f.id || `finding-${fIdx}`} className="rounded-lg bg-white p-3 border border-amber-200 text-xs">
+                        <div className="font-bold text-ink-900">{f.title}</div>
+                        <p className="text-ink-600 mt-0.5">{desc}</p>
+                        {fix && (
+                          <div className="mt-2 flex items-center justify-between gap-2 bg-mint-50 px-2.5 py-1.5 rounded border border-mint-200">
+                            <span className="text-mint-900 font-medium">
+                              Suggested Fix: &ldquo;{fix}&rdquo;
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (excerpt && draftContent.includes(excerpt)) {
+                                  setDraftContent(draftContent.replace(excerpt, fix));
+                                } else {
+                                  setDraftContent(fix);
+                                }
+                              }}
+                              className="rounded bg-mint-600 px-2 py-0.5 text-[10px] font-bold text-white hover:bg-mint-500 shrink-0"
+                            >
+                              Apply Fix
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </Card>

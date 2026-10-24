@@ -18,7 +18,13 @@ export interface AccessGrant {
   granted_at?: string;
 }
 
-const accessGrants = new Map<string, AccessGrant>();
+const globalForAccessGrants = globalThis as unknown as {
+  accessGrantsMap?: Map<string, AccessGrant>;
+};
+
+const accessGrants =
+  globalForAccessGrants.accessGrantsMap ??
+  (globalForAccessGrants.accessGrantsMap = new Map<string, AccessGrant>());
 
 function syncGrantsFromSecurityDB() {
   for (const u of securityDB.users.values()) {

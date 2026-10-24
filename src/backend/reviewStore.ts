@@ -680,4 +680,12 @@ class BackendReviewStore {
   }
 }
 
-export const backendReviewStore = new BackendReviewStore();
+const globalForReviewStore = globalThis as unknown as {
+  backendReviewStore?: BackendReviewStore;
+};
+
+if (!globalForReviewStore.backendReviewStore) {
+  globalForReviewStore.backendReviewStore = new BackendReviewStore();
+}
+
+export const backendReviewStore = globalForReviewStore.backendReviewStore;

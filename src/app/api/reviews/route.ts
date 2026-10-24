@@ -41,12 +41,17 @@ export async function POST(req: NextRequest) {
       content,
       channel = 'Blog',
       isPaidPartnership = false,
-      submittedBy = 'Arjun Rao',
+      submittedBy,
+      submitted_by,
       sourceFileName,
       department = 'marketing',
       brandKnowledgeText,
+      custom_guidelines,
       brandKnowledgeFileName,
     } = body;
+
+    const resolvedAuthor = (submittedBy || submitted_by || 'Arjun Rao').trim();
+    const resolvedKnowledge = brandKnowledgeText || custom_guidelines;
 
     const cleanTitle = (title || '').trim();
     const cleanContent = (content || '').trim();
@@ -62,14 +67,14 @@ export async function POST(req: NextRequest) {
     }
 
     // Ingest custom brand knowledge document/text if provided
-    if (brandKnowledgeText && typeof brandKnowledgeText === 'string' && brandKnowledgeText.trim().length >= 20) {
+    if (resolvedKnowledge && typeof resolvedKnowledge === 'string' && resolvedKnowledge.trim().length >= 20) {
       const docName = brandKnowledgeFileName || `Brand_Knowledge_${Date.now().toString(36)}.md`;
-      const paragraphs = brandKnowledgeText
+      const paragraphs = resolvedKnowledge
         .split(/\n\s*\n/)
         .map((p) => p.trim())
         .filter((p) => p.length > 15);
 
-      const customChunks = (paragraphs.length > 0 ? paragraphs : [brandKnowledgeText.trim()]).map((p, i) => ({
+      const customChunks = (paragraphs.length > 0 ? paragraphs : [resolvedKnowledge.trim()]).map((p, i) => ({
         chunk_id: `custom-k-${Date.now().toString(36)}-${i + 1}`,
         text: p,
         section: `Section ${i + 1}`,
@@ -89,7 +94,7 @@ export async function POST(req: NextRequest) {
     const pkg = await generateReviewPackage({
       content: cleanContent,
       title: cleanTitle,
-      creatorId: submittedBy,
+      creatorId: resolvedAuthor,
       department,
       confidentiality: 'internal',
       callerRole: 'content_creator',
@@ -186,7 +191,7 @@ export async function POST(req: NextRequest) {
       channel,
       status: 'in_review',
       content: cleanContent,
-      submittedBy,
+      submittedBy: resolvedAuthor,
       submittedRole: 'Content Creator',
       submittedAt: now,
       updatedAt: now,
@@ -203,7 +208,7 @@ export async function POST(req: NextRequest) {
           number: 1,
           content: cleanContent,
           createdAt: now,
-          author: submittedBy,
+          author: resolvedAuthor,
           note: sourceFileName ? `Initial submission from ${sourceFileName}.` : 'Initial submission.',
           source: 'submission',
           openFindings,
@@ -215,7 +220,7 @@ export async function POST(req: NextRequest) {
           id: newId('act'),
           type: 'submitted',
           message: 'Submitted version 1 for Two-RAG compliance review.',
-          actor: submittedBy,
+          actor: resolvedAuthor,
           at: now,
         },
         {

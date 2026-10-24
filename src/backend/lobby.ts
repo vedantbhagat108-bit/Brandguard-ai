@@ -43,10 +43,21 @@ export interface ReviewLobby {
   last_score?: number;
 }
 
-// In-memory sessions & lobbies
-const sessions = new Map<string, UserSession>();
-const pendingOtps = new Map<string, { otp: string; expiresAt: number; role: UserRole }>();
-const lobbies = new Map<string, ReviewLobby>();
+// In-memory sessions & lobbies preserved across route bundles
+const globalForLobby = globalThis as unknown as {
+  lobbySessions?: Map<string, UserSession>;
+  lobbyPendingOtps?: Map<string, { otp: string; expiresAt: number; role: UserRole }>;
+  reviewLobbies?: Map<string, ReviewLobby>;
+};
+
+const sessions =
+  globalForLobby.lobbySessions ?? (globalForLobby.lobbySessions = new Map<string, UserSession>());
+const pendingOtps =
+  globalForLobby.lobbyPendingOtps ??
+  (globalForLobby.lobbyPendingOtps = new Map<string, { otp: string; expiresAt: number; role: UserRole }>());
+const lobbies =
+  globalForLobby.reviewLobbies ?? (globalForLobby.reviewLobbies = new Map<string, ReviewLobby>());
+
 
 // Seed default collaborative review lobbies
 function ensureDefaultLobbies() {

@@ -24,10 +24,14 @@ export async function POST(req: NextRequest) {
     }
     const {
       content,
+      content_draft,
+      text,
       department = 'marketing',
       confidentiality = 'internal',
       top_k = 5,
     } = body;
+
+    const rawContent = (content || content_draft || text || '').trim();
 
     const callerRole = (req.headers.get('x-user-role') as UserRole) || 'content_creator';
     const callerId = req.headers.get('x-user-id') || 'creator-1';
@@ -40,12 +44,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!content) {
+    if (!rawContent) {
       return NextResponse.json({ error: 'content is required' }, { status: 400 });
     }
 
     const result = await analyzeContent(
-      content,
+      rawContent,
       department,
       confidentiality as ConfidentialityLevel,
       callerRole,
