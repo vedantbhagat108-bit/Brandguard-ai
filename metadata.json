@@ -1,0 +1,6 @@
+{
+  "name": "BrandGuard AI - Two-RAG Brand Governance Backend",
+  "description": "High-assurance enterprise Two-RAG backend for brand compliance, unsupported-claim detection, hybrid pgvector retrieval, and automated review packages.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

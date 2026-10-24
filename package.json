@@ -4,14 +4,17 @@
   "private": true,
   "description": "BrandLens AI — explainable, human-in-the-loop content compliance review.",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "next start",
-    "lint": "eslint .",
+    "start": "next start -p 3000",
+    "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@google/genai": "^2.4.0",
     "clsx": "^2.1.1",
+    "dotenv": "^17.2.3",
+    "firebase": "^13.1.0",
     "lucide-react": "^1.61.0",
     "mammoth": "^1.13.0",
     "next": "16.4.2",
