@@ -1,0 +1,43 @@
+version: '3.8'
+
+services:
+  # Scalable PostgreSQL Database with pgvector extension (replaces ChromaDB)
+  postgres-pgvector:
+    image: pgvector/pgvector:pg16
+    container_name: brandguard-pgvector
+    environment:
+      POSTGRES_USER: brandguard
+      POSTGRES_PASSWORD: brandguard_secure_password_2026
+      POSTGRES_DB: brandguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgvector_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brandguard -d brandguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # BrandGuard AI Backend Service
+  brandguard-backend:
+    build:
+      context: ..
+      dockerfile: ./brandguard/Dockerfile
+    container_name: brandguard-api
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - DATABASE_URL=postgresql://brandguard:brandguard_secure_password_2026@postgres-pgvector:5432/brandguard
+      - USE_PGVECTOR=true
+      - BRANDGUARD_API_KEY=${BRANDGUARD_API_KEY:-bg-enterprise-secret-key-2026}
+    depends_on:
+      postgres-pgvector:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgvector_data:
