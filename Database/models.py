@@ -30,8 +30,8 @@ def utc_now() -> datetime:
 
 
 def default_pin_expiry() -> datetime:
-    """Calculates single-use PIN expiration: 24 hours from creation."""
-    return datetime.now(timezone.utc) + timedelta(hours=24)
+    """Calculates single-use PIN expiration: 15 minutes from creation."""
+    return datetime.now(timezone.utc) + timedelta(minutes=15)
 
 
 class BrandWorkspace(Base):
@@ -56,8 +56,8 @@ class BrandWorkspace(Base):
 class BrandPin(Base):
     """
     Single-use burnable invitation and access PINs (OTP style).
-    Once redeemed during user registration or workflow access, is_used is marked True
-    and the redeeming email and timestamp are recorded.
+    Includes 15-minute TTL expiration, 5-attempt brute-force protection,
+    and audit tracking for atomic burning.
     """
     __tablename__ = "brand_pins"
 
@@ -66,9 +66,16 @@ class BrandPin(Base):
     pin_code = Column(String(64), unique=True, index=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=utc_now, nullable=False)
     expires_at = Column(DateTime(timezone=True), default=default_pin_expiry, nullable=False)
+    
+    # Lifecycle & Burn Tracking
     is_used = Column(Boolean, default=False, nullable=False)
     used_by_email = Column(String(255), nullable=True)
     used_at = Column(DateTime(timezone=True), nullable=True)
+    burn_reason = Column(String(64), nullable=True)  # "REDEEMED", "EXPIRED_TTL", "SECURITY_LOCKOUT"
+
+    # Brute-force & Rate-Limit Tracking
+    failed_attempts = Column(Integer, default=0, nullable=False)
+    max_attempts = Column(Integer, default=5, nullable=False)
 
     # Relationships
     brand = relationship("BrandWorkspace", back_populates="pins")
@@ -172,6 +179,9 @@ class AuditLog(Base):
     Immutable audit ledger for compliance, security tracking, and forensic traceability.
     Actions:
       - PIN_GENERATED: Single-use invitation PIN generated.
+      - PIN_VERIFIED: PIN verified and creator guest token issued.
+      - PIN_BURNED: PIN consumed or invalidated.
+      - PIN_LOCKED: Security lockout due to brute-force attempts.
       - KB_INGESTED: Guideline uploaded or updated.
       - CONTENT_SUBMITTED: Draft submitted for evaluation.
       - STATUS_UPDATED: Workflow decision recorded.
@@ -181,7 +191,7 @@ class AuditLog(Base):
     id = Column(GUID, primary_key=True, default=uuid.uuid4)
     brand_id = Column(GUID, ForeignKey("brand_workspaces.id", ondelete="CASCADE"), nullable=False, index=True)
     user_id = Column(GUID, nullable=True)
-    action = Column(String(64), nullable=False)  # "PIN_GENERATED", "KB_INGESTED", "CONTENT_SUBMITTED", "STATUS_UPDATED"
+    action = Column(String(64), nullable=False)  # "PIN_GENERATED", "PIN_VERIFIED", "PIN_BURNED", "PIN_LOCKED", "KB_INGESTED", "CONTENT_SUBMITTED", "STATUS_UPDATED"
     details = Column(JSON, nullable=False)
     timestamp = Column(DateTime(timezone=True), default=utc_now, nullable=False)
 
