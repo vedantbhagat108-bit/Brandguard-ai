@@ -22,34 +22,43 @@ def get_current_user(
     db: Session = Depends(get_db)
 ) -> User:
     """
-    Decodes the Bearer token, validates claims, and retrieves the active User record from DB.
-    Raises HTTP 401 Unauthorized if token is invalid, expired, or user does not exist.
+    Decodes the Bearer token, validates tenant boundaries, and retrieves
+    the active User record from DB (supports standard users and BrandPIN guests).
     """
     payload = decode_access_token(token)
-    user_id_str: str = payload.get("sub")
-    if not user_id_str:
+    user_id_or_sub: str = payload.get("sub")
+    token_brand_id: str = payload.get("brand_id")
+
+    if not user_id_or_sub:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token payload missing user identifier (sub)",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    user = None
+    # 1. Attempt lookup by UUID (Standard registered user or auto-provisioned creator)
     try:
-        user_uuid = uuid.UUID(str(user_id_str))
+        user_uuid = uuid.UUID(str(user_id_or_sub))
+        user = db.query(User).filter(User.id == user_uuid).first()
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Malformed user ID claim in token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        # 2. Fallback lookup by email (Guest creator tokens issued with email as sub)
+        user = db.query(User).filter(User.email == str(user_id_or_sub).strip().lower()).first()
 
-    user = db.query(User).filter(User.id == user_uuid).first()
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User associated with this token no longer exists",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    # 3. Enforce multi-tenant token integrity if brand_id claim is present
+    if token_brand_id and str(user.brand_id) != str(token_brand_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cross-tenant token violation: Workspace mismatch.",
+        )
+
     return user
 
 
@@ -74,8 +83,8 @@ def require_reviewer(user: User = Depends(get_current_user)) -> User:
 
 
 def require_creator(user: User = Depends(get_current_user)) -> User:
-    """RBAC Guard: Allows access to CREATOR users."""
-    if user.role != "CREATOR":
+    """RBAC Guard: Allows access to CREATOR users (or ADMIN for testing/management)."""
+    if user.role not in ["CREATOR", "ADMIN"]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Access denied: Operation requires CREATOR role. Current role: {user.role}"
