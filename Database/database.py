@@ -1,7 +1,7 @@
 import os
 import uuid
 from typing import Generator
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -77,3 +77,33 @@ def get_db() -> Generator[Session, None, None]:
         yield db
     finally:
         db.close()
+
+
+def auto_migrate_schema():
+    """
+    Safely checks and patches missing columns on existing tables
+    during startup without requiring manual SQL commands.
+    """
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(conn)
+            tables = inspector.get_table_names()
+
+            if "brand_pins" in tables:
+                columns = [col["name"] for col in inspector.get_columns("brand_pins")]
+
+                # 1. Add burn_reason column if missing
+                if "burn_reason" not in columns:
+                    conn.execute(text("ALTER TABLE brand_pins ADD COLUMN burn_reason VARCHAR(64);"))
+
+                # 2. Add failed_attempts column if missing
+                if "failed_attempts" not in columns:
+                    conn.execute(text("ALTER TABLE brand_pins ADD COLUMN failed_attempts INTEGER DEFAULT 0 NOT NULL;"))
+
+                # 3. Add max_attempts column if missing
+                if "max_attempts" not in columns:
+                    conn.execute(text("ALTER TABLE brand_pins ADD COLUMN max_attempts INTEGER DEFAULT 5 NOT NULL;"))
+
+                conn.commit()
+    except Exception as e:
+        print(f"[Schema Migration Notice]: {e}")
