@@ -2,7 +2,7 @@ import sys
 import uuid
 from pathlib import Path
 from typing import Optional, Literal
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
 
 class UserRegisterRequest(BaseModel):
-    email: str = Field(..., description="User corporate or creator email")
+    email: EmailStr = Field(..., description="User corporate or creator email")
     password: str = Field(..., min_length=6, description="Password (min 6 chars)")
     brand_id: str = Field(..., description="Target brand workspace UUID")
     role: Literal["ADMIN", "REVIEWER", "CREATOR"] = Field("CREATOR", description="Assigned role")
@@ -29,8 +29,14 @@ class UserRegisterRequest(BaseModel):
 
 
 class UserLoginRequest(BaseModel):
-    email: str = Field(..., description="User email")
+    email: EmailStr = Field(..., description="User email")
     password: str = Field(..., description="Plaintext password")
+
+
+class CreatorLobbyLoginRequest(BaseModel):
+    brand_id: str = Field(..., description="Target brand workspace UUID")
+    pin_code: str = Field(..., description="Single-use BrandPIN")
+    email: EmailStr = Field(..., description="Creator email address")
 
 
 class UserProfileResponse(BaseModel):
@@ -49,12 +55,12 @@ class AuthTokenResponse(BaseModel):
 @router.post("/register", response_model=AuthTokenResponse, status_code=status.HTTP_201_CREATED)
 def register(
     payload: UserRegisterRequest,
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
     Registers a new user within a brand workspace.
-    For CREATOR roles, enforces and burns a single-use BrandPIN before account creation.
-    Rejects duplicate emails and invalid workspaces.
+    For CREATOR roles, enforces IP rate limiting, checks 15m TTL/attempts, and burns a single-use BrandPIN.
     """
     normalized_email = payload.email.strip().lower()
 
@@ -89,12 +95,13 @@ def register(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="A valid single-use pin_code is required for CREATOR registration."
             )
-        # Verifies existence, expiration, burns the PIN, and logs redemption email
+        # Verifies existence, expiration (15m), checks IP rate limit, burns PIN, and logs audit
         verify_and_burn_pin(
             pin_code=payload.pin_code,
             brand_id=str(workspace.id),
             user_email=normalized_email,
-            db=db
+            db=db,
+            request=request,
         )
 
     # Create user
@@ -125,6 +132,67 @@ def register(
             email=new_user.email,
             role=new_user.role,
             brand_id=str(new_user.brand_id)
+        )
+    )
+
+
+@router.post("/lobby-login", response_model=AuthTokenResponse)
+def creator_lobby_login(
+    payload: CreatorLobbyLoginRequest,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Public entry lobby endpoint for guest creators.
+    Enforces IP rate limit, checks 15m TTL and failed attempts, burns PIN,
+    and returns a short-lived Creator JWT token without requiring a permanent password.
+    """
+    normalized_email = payload.email.strip().lower()
+
+    # 1. Verify and burn the single-use PIN
+    burned_pin = verify_and_burn_pin(
+        pin_code=payload.pin_code,
+        brand_id=payload.brand_id,
+        user_email=normalized_email,
+        db=db,
+        request=request,
+    )
+
+    # 2. Look up or auto-provision the creator account for foreign-key tracking
+    creator = db.query(User).filter(
+        User.email == normalized_email,
+        User.brand_id == burned_pin.brand_id
+    ).first()
+
+    if not creator:
+        creator = User(
+            id=uuid.uuid4(),
+            email=normalized_email,
+            hashed_password=hash_password(uuid.uuid4().hex),  # Random unusable hash for guest
+            role="CREATOR",
+            brand_id=burned_pin.brand_id,
+        )
+        db.add(creator)
+        db.commit()
+        db.refresh(creator)
+
+    # 3. Issue guest access token
+    token = create_access_token({
+        "sub": str(creator.id),
+        "email": creator.email,
+        "role": "CREATOR",
+        "brand_id": str(creator.brand_id),
+        "pin_id": str(burned_pin.id),
+    })
+
+    return AuthTokenResponse(
+        access_token=token,
+        token_type="bearer",
+        user=UserProfileResponse(
+            id=str(creator.id),
+            email=creator.email,
+            role=creator.role,
+            brand_id=str(creator.brand_id)
         )
     )
 
