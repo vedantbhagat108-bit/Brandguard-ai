@@ -163,7 +163,7 @@ export async function syncAccountToFirestore(
       try {
         await updateDoc(userRef, {
           ...publicData,
-          role: existingData.role || safeFirestoreRole,
+          role: safeFirestoreRole,
           createdAt: existingData.createdAt,
           updatedAt: serverTimestamp(),
         });
