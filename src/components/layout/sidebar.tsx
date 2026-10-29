@@ -86,7 +86,7 @@ function NavItem({
 export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { reviews, loading, resetDemo } = useReviews();
-  const { user, isAuthenticated, setLoginModalOpen, logout } = useAuth();
+  const { user, isAuthenticated, setLoginModalOpen, setPersonalDashboardOpen, logout } = useAuth();
   const { toast } = useToast();
   const [resetOpen, setResetOpen] = useState(false);
   const openReviews = reviewOpenCount(reviews);
@@ -226,9 +226,12 @@ export function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <div className="flex items-center gap-2 border-t border-white/[0.07] pt-3">
             <button
               type="button"
-              onClick={() => setLoginModalOpen(true)}
+              onClick={() => {
+                onNavigate?.();
+                setPersonalDashboardOpen(true);
+              }}
               className="flex min-w-0 flex-1 items-center gap-2.5 text-left transition hover:opacity-90 group cursor-pointer"
-              title="Click to switch account"
+              title="Click to open Personal Dashboard"
             >
               <Avatar name={user.name} size="sm" tone="light" />
               <div className="min-w-0 flex-1">

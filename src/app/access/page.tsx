@@ -18,6 +18,7 @@ import {
   Clock,
   Check,
   X,
+  User,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/providers/toast-provider";
@@ -92,9 +93,9 @@ export default function AccessManagementPage() {
     isAdmin,
     isSuperAdmin,
     setLoginModalOpen,
+    setPersonalDashboardOpen,
     refreshAccessStatus,
     requestAccess,
-    requestRoleChange,
   } = useAuth();
   const { toast } = useToast();
 
@@ -102,11 +103,6 @@ export default function AccessManagementPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
-
-  // Role change request form state for non-Super-Admin users
-  const [desiredRole, setDesiredRole] = useState<"ADMIN" | "REVIEWER" | "CREATOR">("ADMIN");
-  const [roleRequestNote, setRoleRequestNote] = useState("");
-  const [submittingRoleRequest, setSubmittingRoleRequest] = useState(false);
 
   const loadSecurityData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -265,41 +261,6 @@ export default function AccessManagementPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
-    }
-  };
-
-  const handleSubmitRoleRequest = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (desiredRole === user.securityRole) {
-      toast({
-        title: "Already Assigned",
-        description: `Your account already holds the ${
-          desiredRole === "REVIEWER" ? "Manager" : desiredRole
-        } role.`,
-        variant: "info",
-      });
-      return;
-    }
-    setSubmittingRoleRequest(true);
-    try {
-      const result = await requestRoleChange(desiredRole, roleRequestNote);
-      if (result.ok) {
-        toast({
-          title: "Role Change Requested",
-          description: result.message,
-          variant: "success",
-        });
-        setRoleRequestNote("");
-        await loadSecurityData(true);
-      } else {
-        toast({
-          title: "Request Failed",
-          description: result.message,
-          variant: "error",
-        });
-      }
-    } finally {
-      setSubmittingRoleRequest(false);
     }
   };
 
@@ -487,93 +448,37 @@ export default function AccessManagementPage() {
         </Card>
       )}
 
-      {/* NON-SUPER-ADMIN: REQUEST ROLE CHANGE FROM SUPER ADMIN */}
+      {/* NON-SUPER-ADMIN: ROLE CHANGES ARE MANAGED EXCLUSIVELY IN PERSONAL DASHBOARD */}
       {!isSuperAdmin && (
-        <Card className="overflow-hidden border-purple-200 bg-gradient-to-r from-purple-50/50 via-white to-brand-50/30">
-          <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-            <div className="space-y-1.5 max-w-xl">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-bold text-purple-800">
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  Role Change Request
+        <Card className="overflow-hidden border-purple-200/80 bg-gradient-to-r from-purple-50/40 via-white to-brand-50/20 p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-ink-900">
+                  Role Elevation &amp; Personal Projects
                 </span>
-                <span className="text-xs font-semibold text-ink-600">
-                  Current Role:{" "}
-                  <strong className="text-ink-950">
-                    {user.securityRole === "REVIEWER"
-                      ? "MANAGER (REVIEWER)"
-                      : user.securityRole || "CREATOR"}
-                  </strong>
+                <span className="text-[11px] text-ink-500">
+                  Current Role: <strong className="text-ink-900">{user.roleLabel}</strong>
                 </span>
-                {user.roleRequestStatus === "pending" && user.requestedRole && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2.5 py-0.5 text-[11px] font-bold text-amber-900">
-                    <Clock className="h-3 w-3" />
-                    Pending Request:{" "}
-                    {user.requestedRole === "REVIEWER" ? "MANAGER" : user.requestedRole}
-                  </span>
-                )}
-                {user.roleRequestStatus === "approved" && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-mint-100 border border-mint-300 px-2.5 py-0.5 text-[11px] font-bold text-mint-900">
-                    <CheckCircle2 className="h-3 w-3" />
-                    Role Updated by Super Admin
+                {user.roleRequestStatus === "pending" && (
+                  <span className="text-[11px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded">
+                    Request Pending ({user.requestedRole})
                   </span>
                 )}
               </div>
-              <h3 className="text-sm font-bold text-ink-950">
-                Request Role Change from Super Admin
-              </h3>
-              <p className="text-xs text-ink-500 leading-relaxed">
-                Need Admin or Manager permissions to create lobby rooms or approve compliance reviews? Submit a role request to the Super Admin — as soon as it is approved, your role updates automatically.
+              <p className="text-xs text-ink-500">
+                To request role changes from the Super Admin or manage your profile and project history, use your Personal Dashboard.
               </p>
             </div>
-
-            <form
-              onSubmit={handleSubmitRoleRequest}
-              className="flex flex-col sm:flex-row items-stretch sm:items-end gap-2.5 shrink-0"
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setPersonalDashboardOpen(true)}
+              className="shrink-0 h-8 text-xs font-semibold"
             >
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">
-                  Requested Role
-                </label>
-                <select
-                  value={desiredRole}
-                  onChange={(e) =>
-                    setDesiredRole(e.target.value as "ADMIN" | "REVIEWER" | "CREATOR")
-                  }
-                  className="h-9 rounded-xl border border-line bg-white px-3 text-xs font-semibold text-ink-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                >
-                  <option value="ADMIN">Admin (Create Rooms &amp; Manage)</option>
-                  <option value="REVIEWER">Manager / Reviewer (Approve Reviews)</option>
-                  <option value="CREATOR">Creator (Submit &amp; Collaborate)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">
-                  Reason / Note (Optional)
-                </label>
-                <input
-                  type="text"
-                  value={roleRequestNote}
-                  onChange={(e) => setRoleRequestNote(e.target.value)}
-                  placeholder="e.g., Need Admin to host review room"
-                  className="h-9 w-full sm:w-56 rounded-xl border border-line bg-white px-3 text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-                />
-              </div>
-              <Button
-                type="submit"
-                size="sm"
-                variant="primary"
-                disabled={submittingRoleRequest}
-                className="h-9 !bg-purple-600 hover:!bg-purple-500"
-              >
-                <ArrowUpRight className="h-3.5 w-3.5" />
-                {submittingRoleRequest
-                  ? "Sending..."
-                  : user.roleRequestStatus === "pending"
-                  ? "Update Request"
-                  : "Request Role Change"}
-              </Button>
-            </form>
+              <User className="h-3.5 w-3.5 mr-1.5" />
+              Open Personal Dashboard
+            </Button>
           </div>
         </Card>
       )}

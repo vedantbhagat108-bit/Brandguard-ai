@@ -110,7 +110,10 @@ export interface AuditLogRecord {
     | 'VISUAL_ASSET_ARCHIVED'
     | 'VISUAL_ASSET_VERSIONED'
     | 'VISUAL_ASSET_DELETED'
-    | 'VISUAL_REVIEW_COMPLETED';
+    | 'VISUAL_REVIEW_COMPLETED'
+    | 'USER_ACCOUNT_DELETED'
+    | 'PROFILE_UPDATED'
+    | 'HISTORY_CLEARED';
   details: Record<string, any>;
   details_text: string;
   timestamp: string;
@@ -379,7 +382,11 @@ export class MultiTenantSecurityDB {
     }
 
     const previousRole = target.role;
-    target.role = params.newRole;
+    if (target.email.toLowerCase() === 'admin@gmail.com') {
+      target.role = 'SUPER_ADMIN';
+    } else {
+      target.role = params.newRole;
+    }
     target.is_approved = true;
     target.lobby_access = true;
     target.requested_role = null;
@@ -586,6 +593,78 @@ export class MultiTenantSecurityDB {
     });
 
     return user;
+  }
+
+  public updateUserProfile(params: {
+    userIdOrEmail: string;
+    name?: string;
+    department?: string;
+    brand_name?: string;
+  }): DBUserRecord {
+    this.loadFromDisk();
+    const user = this.findUserByIdOrIdentifier(params.userIdOrEmail);
+    if (!user) {
+      const err: any = new Error('User not found.');
+      err.status = 404;
+      throw err;
+    }
+
+    if (params.name && params.name.trim()) {
+      user.name = params.name.trim();
+    }
+    if (params.department && params.department.trim()) {
+      user.department = params.department.trim();
+    }
+    if (params.brand_name && params.brand_name.trim()) {
+      user.brand_name = params.brand_name.trim();
+    }
+
+    this.users.set(user.id, user);
+    this.saveToDisk();
+
+    this.logAudit({
+      brand_id: user.brand_id,
+      user_id: user.id,
+      user_email: user.email,
+      action: 'PROFILE_UPDATED',
+      details: {
+        updated_name: user.name,
+        department: user.department,
+        brand_name: user.brand_name,
+      },
+    });
+
+    return user;
+  }
+
+  public deleteUserAccount(userIdOrEmail: string): boolean {
+    this.loadFromDisk();
+    const user = this.findUserByIdOrIdentifier(userIdOrEmail);
+    if (!user) return false;
+
+    if (user.role === 'SUPER_ADMIN' || user.email.toLowerCase() === 'admin@gmail.com') {
+      const err: any = new Error('Cannot delete primary Super Admin account.');
+      err.status = 400;
+      throw err;
+    }
+
+    this.users.delete(user.id);
+    this.saveToDisk();
+
+    this.logAudit({
+      brand_id: user.brand_id,
+      user_id: user.id,
+      user_email: user.email,
+      action: 'USER_ACCOUNT_DELETED',
+      details: {
+        email: user.email,
+        username: user.username,
+        name: user.name,
+        role: user.role,
+      },
+    });
+
+    return true;
   }
 
   public generatePin(params: {

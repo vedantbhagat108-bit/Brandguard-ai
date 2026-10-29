@@ -584,6 +584,42 @@ class BackendReviewStore {
     return this.save(review);
   }
 
+  delete(id: string): boolean {
+    this.init();
+    const existing = this.reviews.get(id);
+    if (!existing) return false;
+    this.reviews.delete(id);
+    securityDB.submissions.delete(id);
+    this.saveToDisk();
+    securityDB.saveToDisk();
+    return true;
+  }
+
+  deleteReviewsForUser(userIdentifier: string, userEmail?: string): number {
+    this.init();
+    this.loadFromDisk();
+    let count = 0;
+    const cleanId = (userIdentifier || '').trim().toLowerCase();
+    const cleanEmail = (userEmail || '').trim().toLowerCase();
+    if (!cleanId && !cleanEmail) return 0;
+
+    for (const [id, r] of Array.from(this.reviews.entries())) {
+      const match =
+        (cleanId && (r.submittedBy || '').toLowerCase() === cleanId) ||
+        (cleanEmail && ((r.submittedBy || '').toLowerCase() === cleanEmail || (r.submittedRole || '').toLowerCase().includes(cleanEmail)));
+      if (match) {
+        this.reviews.delete(id);
+        securityDB.submissions.delete(id);
+        count++;
+      }
+    }
+    if (count > 0) {
+      this.saveToDisk();
+      securityDB.saveToDisk();
+    }
+    return count;
+  }
+
   reset(): Review[] {
     this.reviews.clear();
     securityDB.submissions.clear();

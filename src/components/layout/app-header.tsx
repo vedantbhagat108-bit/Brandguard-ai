@@ -36,7 +36,7 @@ function useBreadcrumbs(pathname: string) {
 export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
   const pathname = usePathname();
   const breadcrumbs = useBreadcrumbs(pathname);
-  const { user, isAuthenticated, setLoginModalOpen, logout } = useAuth();
+  const { user, isAuthenticated, setLoginModalOpen, setPersonalDashboardOpen, logout } = useAuth();
 
   return (
     <header className="sticky top-0 z-30 border-b border-line/80 bg-white/80 backdrop-blur-xl">
@@ -106,9 +106,10 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setLoginModalOpen(true)}
-                className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-ink-100 transition cursor-pointer text-left"
-                title={`${user.name} · ${user.roleLabel} (Click to switch account)`}
+                onClick={() => setPersonalDashboardOpen(true)}
+                className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-ink-100 transition cursor-pointer text-left group"
+                title={`${user.name} · ${user.roleLabel} (Open Personal Dashboard)`}
+                aria-label="Open Personal Dashboard"
               >
                 <Avatar name={user.name} size="sm" />
                 <div className="hidden xl:block">

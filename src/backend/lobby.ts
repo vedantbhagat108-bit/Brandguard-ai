@@ -825,3 +825,23 @@ export function updateLobbyState(params: {
   saveLobbiesToDisk();
   return lobby;
 }
+
+export function deleteLobbiesForUser(userId?: string | null, email?: string | null): number {
+  sanitizeLobbies();
+  const cleanId = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanId && !cleanEmail) return 0;
+
+  let count = 0;
+  for (const [code, room] of Array.from(lobbies.entries())) {
+    if (isRoomCreator(room, cleanId, cleanEmail)) {
+      lobbies.delete(code);
+      count++;
+    }
+  }
+  if (count > 0) {
+    saveLobbiesToDisk();
+  }
+  return count;
+}
+

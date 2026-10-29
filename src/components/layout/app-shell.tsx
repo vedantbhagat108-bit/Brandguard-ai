@@ -4,6 +4,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import { SidebarContent } from "@/components/layout/sidebar";
 import { AppHeader } from "@/components/layout/app-header";
+import { PersonalDashboardDrawer } from "@/components/personal-dashboard/personal-dashboard-drawer";
 
 export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -59,6 +60,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       )}
+
+      <PersonalDashboardDrawer />
     </div>
   );
 }

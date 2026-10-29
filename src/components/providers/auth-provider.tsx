@@ -110,7 +110,20 @@ interface AuthContextValue {
   ) => Promise<{ ok: boolean; message?: string; error?: string }>;
   loginModalOpen: boolean;
   setLoginModalOpen: (open: boolean) => void;
+  personalDashboardOpen: boolean;
+  setPersonalDashboardOpen: (open: boolean) => void;
   refreshAccessStatus: () => Promise<void>;
+  updateUserProfile: (params: {
+    name?: string;
+    department?: string;
+    brand_name?: string;
+  }) => Promise<{ ok: boolean; error?: string; user?: UserAccount }>;
+  deleteUserHistory: (scope: "reviews" | "lobbies" | "all") => Promise<{
+    ok: boolean;
+    deleted?: { reviews: number; lobbies: number };
+    error?: string;
+  }>;
+  deleteUserAccount: () => Promise<{ ok: boolean; error?: string }>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -130,6 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [cloudSynced, setCloudSynced] = useState<boolean>(false);
   const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [personalDashboardOpen, setPersonalDashboardOpen] = useState(false);
 
   // Restore saved session only if explicitly authenticated
   useEffect(() => {
@@ -157,7 +171,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(nextUser));
       localStorage.setItem(STORAGE_AUTH_ACTIVE_KEY, "true");
     } catch {}
-    if (auth.currentUser) {
+    // Only sync to Firestore if the current Firebase user matches this account email!
+    if (
+      auth.currentUser &&
+      auth.currentUser.email &&
+      nextUser.email &&
+      auth.currentUser.email.toLowerCase() === nextUser.email.toLowerCase()
+    ) {
       void syncAccountToFirestore(nextUser).then((ok) => {
         if (ok) setCloudSynced(true);
       });
@@ -227,10 +247,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const refreshAccessStatus = useCallback(async () => {
     if (!user.id && !user.email) return;
+    const currentEmail = (user.email || "").trim().toLowerCase();
+    const isSuper = currentEmail === "admin@gmail.com";
+
     try {
       const qs = new URLSearchParams({
         user_id: user.id || "",
-        email: user.email || "",
+        email: currentEmail,
       });
       const res = await fetch(`/api/access/status?${qs.toString()}`, {
         cache: "no-store",
@@ -238,17 +261,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         const data = await res.json();
         const apiUser = data.user;
-        const resolvedSecurityRole: SecurityRole =
-          (apiUser?.role as SecurityRole) ||
-          (data.role as SecurityRole) ||
-          user.securityRole ||
-          "CREATOR";
+
+        // If returned user email doesn't match active session email, NEVER overwrite the active session!
+        if (
+          apiUser &&
+          currentEmail &&
+          apiUser.email &&
+          apiUser.email.toLowerCase() !== currentEmail
+        ) {
+          return;
+        }
+
+        const resolvedSecurityRole: SecurityRole = isSuper
+          ? "SUPER_ADMIN"
+          : (apiUser?.role as SecurityRole) ||
+            (data.role as SecurityRole) ||
+            user.securityRole ||
+            "CREATOR";
+
         const resolvedAppRole: AppUserRole =
           resolvedSecurityRole === "SUPER_ADMIN" ||
           resolvedSecurityRole === "ADMIN" ||
           resolvedSecurityRole === "REVIEWER"
             ? "manager"
             : "content_creator";
+
         const isApproved =
           resolvedAppRole === "manager" ? true : data.is_approved !== false;
         const lobbyAccess =
@@ -261,6 +298,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const roleLabel = getRoleLabel(resolvedSecurityRole, isApproved);
 
         setUser((prev) => {
+          // Double-check active account hasn't switched
+          if (
+            currentEmail &&
+            prev.email &&
+            prev.email.toLowerCase() !== currentEmail
+          ) {
+            return prev;
+          }
+
           const updated: UserAccount = {
             ...prev,
             id: apiUser?.id || prev.id,
@@ -650,6 +696,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setCloudSynced(false);
         return;
       }
+
+      // Safeguard: Check if another account (e.g. Super Admin) is actively signed in on this applet
+      try {
+        const stored = localStorage.getItem(STORAGE_AUTH_KEY);
+        const storedAuth = localStorage.getItem(STORAGE_AUTH_ACTIVE_KEY);
+        if (stored && storedAuth === "true") {
+          const parsed = JSON.parse(stored);
+          if (
+            parsed?.email &&
+            fbUser.email &&
+            parsed.email.toLowerCase() !== fbUser.email.toLowerCase()
+          ) {
+            // Active session belongs to a different user (e.g. admin@gmail.com).
+            // Do NOT overwrite it with the background Firebase Auth user!
+            return;
+          }
+        }
+      } catch {}
+
       const cloudProfile = await loadCrossDeviceProfileFromFirestore(fbUser);
       if (cloudProfile) {
         try {
@@ -690,6 +755,104 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAdmin =
     user.securityRole === "ADMIN" || user.securityRole === "SUPER_ADMIN";
 
+  const updateUserProfile = useCallback(
+    async (params: { name?: string; department?: string; brand_name?: string }) => {
+      if (!user.id && !user.email) {
+        return { ok: false, error: "Must be signed in to update profile." };
+      }
+      try {
+        const res = await fetch("/api/user/profile", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId: user.id,
+            email: user.email,
+            ...params,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return { ok: false, error: data.error || "Failed to update profile." };
+        }
+        if (data.user) {
+          const updatedName = data.user.name || user.name;
+          const nextAccount: UserAccount = {
+            ...user,
+            name: updatedName,
+            department: data.user.department || user.department,
+            brand_name: data.user.brand_name || user.brand_name,
+            initials: updatedName
+              .split(" ")
+              .map((n: string) => n[0])
+              .join("")
+              .toUpperCase()
+              .slice(0, 2),
+          };
+          saveUser(nextAccount);
+          return { ok: true, user: nextAccount };
+        }
+        return { ok: true };
+      } catch (e: any) {
+        return { ok: false, error: e.message || "Network error" };
+      }
+    },
+    [saveUser, user]
+  );
+
+  const deleteUserHistory = useCallback(
+    async (scope: "reviews" | "lobbies" | "all") => {
+      if (!user.id && !user.email) {
+        return { ok: false, error: "Must be signed in to clear history." };
+      }
+      try {
+        const res = await fetch("/api/user/profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "delete_history",
+            userId: user.id,
+            email: user.email,
+            scope,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return { ok: false, error: data.error || "Failed to clear history." };
+        }
+        return { ok: true, deleted: data.deleted };
+      } catch (e: any) {
+        return { ok: false, error: e.message || "Network error" };
+      }
+    },
+    [user.email, user.id]
+  );
+
+  const deleteUserAccount = useCallback(async () => {
+    if (!user.id && !user.email) {
+      return { ok: false, error: "Must be signed in to delete account." };
+    }
+    try {
+      const res = await fetch("/api/user/profile", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "delete_account",
+          userId: user.id,
+          email: user.email,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { ok: false, error: data.error || "Failed to delete account." };
+      }
+      logout();
+      setPersonalDashboardOpen(false);
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e.message || "Network error" };
+    }
+  }, [logout, user.email, user.id]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -712,7 +875,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         requestRoleChange,
         loginModalOpen,
         setLoginModalOpen,
+        personalDashboardOpen,
+        setPersonalDashboardOpen,
         refreshAccessStatus,
+        updateUserProfile,
+        deleteUserHistory,
+        deleteUserAccount,
       }}
     >
       {children}

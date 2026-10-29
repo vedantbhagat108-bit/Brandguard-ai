@@ -138,22 +138,27 @@ export function requestDatabaseAccess(params: {
 
 export function getAccessStatus(userId: string, email?: string | null) {
   syncGrantsFromSecurityDB();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const isSuper = cleanEmail === 'admin@gmail.com';
+
   let dbUser =
-    securityDB.findUserByIdOrIdentifier(userId) ||
-    (email ? securityDB.findUserByEmail(email) : undefined);
+    (cleanEmail ? securityDB.findUserByEmail(cleanEmail) : undefined) ||
+    securityDB.findUserByIdOrIdentifier(userId);
+
+  if (dbUser && isSuper) {
+    dbUser.role = 'SUPER_ADMIN';
+  }
 
   // If an authenticated user with an email is not yet in securityDB, provision them with lobby_access: true
-  if (!dbUser && email && email.includes('@')) {
-    const cleanEmail = email.trim().toLowerCase();
-    const isSuper = cleanEmail === 'admin@gmail.com';
+  if (!dbUser && cleanEmail && cleanEmail.includes('@')) {
     const defaultBrandId = isSuper
       ? 'b0000000-0000-4000-8000-000000000000'
       : 'b0000001-0000-4000-8000-000000000001';
     const workspaceName =
       securityDB.workspaces.get(defaultBrandId)?.name || 'Default Workspace';
     dbUser = {
-      id: userId || `usr_${Date.now()}`,
-      username: cleanEmail.split('@')[0],
+      id: isSuper ? 'u0000000-super-admin' : userId || `usr_${Date.now()}`,
+      username: isSuper ? 'admin' : cleanEmail.split('@')[0],
       email: cleanEmail,
       hashed_password: 'session_user',
       role: isSuper ? 'SUPER_ADMIN' : 'CREATOR',
