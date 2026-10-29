@@ -1,13 +1,11 @@
 import sys
 import secrets
 import uuid
-from fastapi import BackgroundTasks
-from email_service import send_otp_email
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -17,14 +15,16 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from database import get_db
-from models import BrandPin, AuditLog, User, default_pin_expiry
+from models import BrandPin, AuditLog, User, BrandWorkspace, default_pin_expiry
 from security_deps import require_admin, validate_brand_access
 from rate_limiter import pin_ip_limiter
+from email_service import send_otp_email
 
 router = APIRouter(prefix="/api/pins", tags=["BrandPIN"])
 
 
 class GeneratePinRequest(BaseModel):
+    recipient_email: EmailStr = Field(..., description="Registered email to receive the OTP")
     brand_id: Optional[str] = Field(None, description="Optional target brand ID; defaults to admin's brand")
     prefix: Optional[str] = Field("PIN", description="Custom prefix for the generated PIN code")
 
@@ -33,6 +33,7 @@ class PinResponse(BaseModel):
     pin_code: str
     expires_at: str
     brand_id: str
+    recipient_email: str
 
 
 class VerifyPinRequest(BaseModel):
@@ -105,7 +106,7 @@ def verify_and_burn_pin(
                 active_pin.is_used = True
                 active_pin.used_at = now_utc
                 active_pin.burn_reason = "SECURITY_LOCKOUT"
-                
+
                 db.add(AuditLog(
                     brand_id=brand_uuid,
                     action="PIN_LOCKED",
@@ -134,7 +135,7 @@ def verify_and_burn_pin(
         pin.is_used = True
         pin.used_at = now_utc
         pin.burn_reason = "SECURITY_LOCKOUT"
-        
+
         db.add(AuditLog(
             brand_id=brand_uuid,
             action="PIN_LOCKED",
@@ -156,7 +157,7 @@ def verify_and_burn_pin(
         pin.is_used = True
         pin.used_at = now_utc
         pin.burn_reason = "EXPIRED_TTL"
-        
+
         db.add(AuditLog(
             brand_id=brand_uuid,
             action="PIN_BURNED",
@@ -194,22 +195,26 @@ def verify_and_burn_pin(
 
 @router.post("/generate", response_model=PinResponse, status_code=status.HTTP_201_CREATED)
 def generate_pin(
-    payload: Optional[GeneratePinRequest] = None,
+    payload: GeneratePinRequest,
+    background_tasks: BackgroundTasks,
     current_admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     """
-    Generates a fresh single-use burnable PIN with 15-minute expiration.
-    Protected strictly by ADMIN role. Logs an audit trail event upon issuance.
+    Generates a fresh single-use burnable PIN with 15-minute expiration,
+    logs the event in the audit trail, and dispatches the OTP to recipient_email in the background.
     """
     target_brand_id = current_admin.brand_id
     prefix = "PIN"
-    if payload:
-        if payload.brand_id:
-            validate_brand_access(current_admin, payload.brand_id)
-            target_brand_id = uuid.UUID(str(payload.brand_id))
-        if payload.prefix:
-            prefix = payload.prefix
+
+    if payload.brand_id:
+        validate_brand_access(current_admin, payload.brand_id)
+        target_brand_id = uuid.UUID(str(payload.brand_id))
+    if payload.prefix:
+        prefix = payload.prefix
+
+    workspace = db.query(BrandWorkspace).filter(BrandWorkspace.id == target_brand_id).first()
+    brand_name = workspace.name if workspace else "BrandLens AI"
 
     pin_code = generate_random_pin_code(prefix=prefix)
     now_utc = datetime.now(timezone.utc)
@@ -236,6 +241,7 @@ def generate_pin(
             "pin_id": str(new_pin.id),
             "pin_code": new_pin.pin_code,
             "generated_by": current_admin.email,
+            "sent_to": payload.recipient_email,
             "expires_at": new_pin.expires_at.isoformat(),
         },
         timestamp=now_utc,
@@ -244,10 +250,19 @@ def generate_pin(
     db.commit()
     db.refresh(new_pin)
 
+    # Dispatch OTP directly to recipient email in background
+    background_tasks.add_task(
+        send_otp_email,
+        recipient_email=payload.recipient_email,
+        pin_code=new_pin.pin_code,
+        brand_name=brand_name
+    )
+
     return PinResponse(
         pin_code=new_pin.pin_code,
         expires_at=new_pin.expires_at.isoformat(),
         brand_id=str(new_pin.brand_id),
+        recipient_email=payload.recipient_email,
     )
 
 
