@@ -50,13 +50,18 @@ def run_verification():
     print(f"  -> Success: Admin JWT issued. Brand ID: {brand_id}")
     checklist.append(("Admin Authentication (POST /api/auth/login)", True, "HTTP 200 - JWT issued"))
 
-    # ---------------------------------------------------------
+   # ---------------------------------------------------------
     # Step 2: Generate Fresh Single-Use BrandPIN
     # ---------------------------------------------------------
+    target_creator_email = "creator_test@ecofresh.com"
     print("\n[Step 2] Admin generating fresh single-use BrandPIN...")
     pin_resp = client.post(
         "/api/pins/generate",
-        json={"brand_id": brand_id, "prefix": "TESTPIN"},
+        json={
+            "brand_id": brand_id,
+            "prefix": "TESTPIN",
+            "recipient_email": target_creator_email
+        },
         headers={"Authorization": f"Bearer {admin_token}"}
     )
     assert pin_resp.status_code == 201, f"PIN generation failed: {pin_resp.text}"
@@ -68,18 +73,21 @@ def run_verification():
     # ---------------------------------------------------------
     # Step 3: Register Creator Using Fresh PIN
     # ---------------------------------------------------------
-    new_creator_email = f"verified_creator_{fresh_pin.lower()}@ecofresh.com"
-    print(f"\n[Step 3] Registering Creator ({new_creator_email}) using {fresh_pin}...")
+    print(f"\n[Step 3] Registering Creator ({target_creator_email}) using {fresh_pin}...")
     reg_resp = client.post(
         "/api/auth/register",
         json={
-            "email": new_creator_email,
+            "email": target_creator_email,
             "password": "CreatorPassword123!",
             "brand_id": brand_id,
             "role": "CREATOR",
             "pin_code": fresh_pin
         }
     )
+    assert reg_resp.status_code == 201, f"Creator registration failed: {reg_resp.text}"
+    creator_token = reg_resp.json()["access_token"]
+    print(f"  -> Success: Creator registered and authenticated.")
+    checklist.append(("Creator Registration with PIN (POST /api/auth/register)", True, "HTTP 201 - Account created"))
     assert reg_resp.status_code == 201, f"Creator registration failed: {reg_resp.text}"
     creator_token = reg_resp.json()["access_token"]
     print(f"  -> Success: Creator registered and authenticated.")
