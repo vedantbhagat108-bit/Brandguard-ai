@@ -1,6 +1,8 @@
 import sys
 import secrets
 import uuid
+from fastapi import BackgroundTasks
+from email_service import send_otp_email
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
