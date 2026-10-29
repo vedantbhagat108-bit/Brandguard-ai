@@ -5,9 +5,9 @@ from email.mime.text import MIMEText
 
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER = os.getenv("SMTP_USER", "")
-SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-FROM_EMAIL = os.getenv("FROM_EMAIL", SMTP_USER or "noreply@brandlens.ai")
+SMTP_USER = os.getenv("SMTP_USER", "shriy9190@gmail.com")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "your_16_digit_app_password")
+FROM_EMAIL = os.getenv("FROM_EMAIL", "shriy9190@gmail.com")
 
 
 def send_otp_email(recipient_email: str, pin_code: str, brand_name: str = "BrandLens AI"):
@@ -21,26 +21,25 @@ def send_otp_email(recipient_email: str, pin_code: str, brand_name: str = "Brand
             <span style="font-size: 32px; font-weight: bold; letter-spacing: 6px; color: #111;">{pin_code}</span>
         </div>
         <p style="color: #777; font-size: 13px;">This code is single-use and will expire in <strong>15 minutes</strong>.</p>
+        <p style="color: #999; font-size: 12px; margin-top: 24px; border-top: 1px solid #eee; padding-top: 12px;">
+            If you did not request this code, you can safely ignore this email.
+        </p>
     </div>
     """
-
-    # If no SMTP configured, log in console for testing
-    if not SMTP_USER or not SMTP_PASSWORD:
-        print(f"\n[EMAIL CONSOLE] OTP for {recipient_email} is: {pin_code}\n")
-        return
 
     try:
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
-        msg["From"] = FROM_EMAIL
+        msg["From"] = f"{brand_name} <{FROM_EMAIL}>"
         msg["To"] = recipient_email
         msg.attach(MIMEText(html_content, "html"))
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(FROM_EMAIL, recipient_email, msg.as_string())
             
-        print(f"[Email Service]: OTP delivered to {recipient_email}")
-    except Exception as exc:
-        print(f"[Email Service Error]: {exc}")
+        print(f"[Email Service]: Successfully sent OTP to {recipient_email} via {FROM_EMAIL}")
+    except (smtplib.SMTPAuthenticationError, smtplib.SMTPException, Exception) as exc:
+        print(f"[Email Service Warning]: Could not deliver via SMTP ({exc})")
+        print(f"[LOCAL BACKUP]: OTP for {recipient_email} is -> {pin_code}")
