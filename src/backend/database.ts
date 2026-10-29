@@ -122,7 +122,6 @@ export interface AuditLogRecord {
 const JWT_SECRET = process.env.JWT_SECRET_KEY || 'brandlens-ai-secure-secret-key-change-in-production-2026';
 
 const LEGACY_DEMO_USER_IDS = new Set([
-  'u0000000-admin-vedant',
   'u0000001-0000-4000-8000-000000000001',
   'u0000002-0000-4000-8000-000000000002',
   'u0000003-0000-4000-8000-000000000003',
@@ -248,7 +247,7 @@ export class MultiTenantSecurityDB {
           Boolean(u.is_approved);
       }
     }
-    this.ensureSuperAdminAccount();
+    this.seedInitialAccounts();
   }
 
   public ensureSuperAdminAccount() {
@@ -277,6 +276,54 @@ export class MultiTenantSecurityDB {
       password_updated_at: existing?.password_updated_at,
     };
     this.users.set(superAdminRecord.id, superAdminRecord);
+  }
+
+  public seedInitialAccounts() {
+    this.ensureSuperAdminAccount();
+
+    const defaultBrandId = 'b0000001-0000-4000-8000-000000000001';
+    const defaultBrandName = 'Default Workspace';
+    const now = new Date().toISOString();
+
+    // Ensure demo account exists (preserves role if already set, e.g. ADMIN)
+    const existingDemo = this.findUserByEmail('demo@t1.in') || this.findUserByUsername('demo');
+    if (!existingDemo) {
+      const demoUser: DBUserRecord = {
+        id: 'u_demo_t1',
+        username: 'demo',
+        email: 'demo@t1.in',
+        hashed_password: hashPassword('demo123'),
+        role: 'ADMIN',
+        brand_id: defaultBrandId,
+        brand_name: defaultBrandName,
+        name: 'demo',
+        department: 'Marketing',
+        is_approved: true,
+        lobby_access: true,
+        created_at: now,
+      };
+      this.users.set(demoUser.id, demoUser);
+    }
+
+    // Ensure vedantbhagat108 account exists
+    const existingVedant = this.findUserByEmail('vedantbhagat108@gmail.com') || this.findUserByUsername('vedantbhagat108');
+    if (!existingVedant) {
+      const vedantUser: DBUserRecord = {
+        id: 'u_vedant_108',
+        username: 'vedantbhagat108',
+        email: 'vedantbhagat108@gmail.com',
+        hashed_password: hashPassword('vedant123'),
+        role: 'CREATOR',
+        brand_id: defaultBrandId,
+        brand_name: defaultBrandName,
+        name: 'vedantbhagat108',
+        department: 'Marketing',
+        is_approved: true,
+        lobby_access: true,
+        created_at: now,
+      };
+      this.users.set(vedantUser.id, vedantUser);
+    }
   }
 
   public getOrCreateWorkspaceByName(
@@ -815,6 +862,8 @@ export class MultiTenantSecurityDB {
     }
   }
 
+  private lastLoadedMtime = 0;
+
   public saveToDisk(): void {
     try {
       const filePath = this.getStorageFilePath();
@@ -826,58 +875,133 @@ export class MultiTenantSecurityDB {
         submissions: Array.from(this.submissions.entries()),
         auditLogs: this.auditLogs.slice(0, 250),
       };
-      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+      const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
+      fs.renameSync(tempPath, filePath);
+      try {
+        const stat = fs.statSync(filePath);
+        this.lastLoadedMtime = stat.mtimeMs;
+      } catch {}
     } catch {
-      // Safe fallback in read-only serverless environments
+      // Safe fallback in read-only environments
     }
   }
 
-  public loadFromDisk(): void {
+  public loadFromDisk(force = false): void {
     try {
       const filePath = this.getStorageFilePath();
-      if (!fs.existsSync(filePath)) return;
+      if (!fs.existsSync(filePath)) {
+        this.seedInitialAccounts();
+        this.saveToDisk();
+        return;
+      }
+
+      const stat = fs.statSync(filePath);
+      if (!force && this.users.size > 0 && this.lastLoadedMtime >= stat.mtimeMs) {
+        return;
+      }
+      this.lastLoadedMtime = stat.mtimeMs;
+
       const raw = fs.readFileSync(filePath, 'utf8');
+      if (!raw || !raw.trim()) {
+        this.seedInitialAccounts();
+        this.saveToDisk();
+        return;
+      }
+
       const parsed = JSON.parse(raw);
+
       if (Array.isArray(parsed.workspaces)) {
-        for (const [id, ws] of parsed.workspaces) {
+        for (const item of parsed.workspaces) {
+          let id: string | undefined;
+          let ws: BrandWorkspaceRecord | undefined;
+          if (Array.isArray(item) && item.length === 2) {
+            [id, ws] = item;
+          } else if (item && typeof item === 'object' && item.id) {
+            id = item.id;
+            ws = item;
+          }
           if (id && ws && ws.name) {
             this.workspaces.set(id, ws);
           }
         }
       }
+
       if (Array.isArray(parsed.users)) {
-        for (const [id, u] of parsed.users) {
+        for (const item of parsed.users) {
+          let id: string | undefined;
+          let u: DBUserRecord | undefined;
+          if (Array.isArray(item) && item.length === 2) {
+            [id, u] = item;
+          } else if (item && typeof item === 'object' && item.id) {
+            id = item.id;
+            u = item;
+          }
           if (id && u && u.email && !LEGACY_DEMO_USER_IDS.has(id)) {
+            if (u.email.toLowerCase() === 'admin@gmail.com') {
+              u.role = 'SUPER_ADMIN';
+            }
             this.users.set(id, u);
           }
         }
       }
+
       if (Array.isArray(parsed.pins)) {
-        for (const [code, p] of parsed.pins) {
+        for (const item of parsed.pins) {
+          let code: string | undefined;
+          let p: BrandPinRecord | undefined;
+          if (Array.isArray(item) && item.length === 2) {
+            [code, p] = item;
+          } else if (item && typeof item === 'object' && item.pin_code) {
+            code = item.pin_code;
+            p = item;
+          }
           if (code && p && !LEGACY_DEMO_PINS.has(code)) {
             this.pins.set(code, p);
           }
         }
       }
+
       if (Array.isArray(parsed.guidelines)) {
-        for (const [id, g] of parsed.guidelines) {
+        for (const item of parsed.guidelines) {
+          let id: string | undefined;
+          let g: BrandGuidelineRecord | undefined;
+          if (Array.isArray(item) && item.length === 2) {
+            [id, g] = item;
+          } else if (item && typeof item === 'object' && item.id) {
+            id = item.id;
+            g = item;
+          }
           if (id && g && g.title) {
             this.guidelines.set(id, g);
           }
         }
       }
+
       if (Array.isArray(parsed.submissions)) {
-        for (const [id, sub] of parsed.submissions) {
+        for (const item of parsed.submissions) {
+          let id: string | undefined;
+          let sub: SubmissionRecord | undefined;
+          if (Array.isArray(item) && item.length === 2) {
+            [id, sub] = item;
+          } else if (item && typeof item === 'object' && item.id) {
+            id = item.id;
+            sub = item;
+          }
           if (id && sub && sub.campaign_name) {
             this.submissions.set(id, sub);
           }
         }
       }
+
       if (Array.isArray(parsed.auditLogs) && parsed.auditLogs.length > 0) {
         this.auditLogs = parsed.auditLogs;
       }
-    } catch {
-      // Ignore corrupted or missing file
+
+      this.seedInitialAccounts();
+    } catch (err) {
+      console.warn('Failed to load security DB from disk:', err);
+      this.seedInitialAccounts();
     }
   }
 }

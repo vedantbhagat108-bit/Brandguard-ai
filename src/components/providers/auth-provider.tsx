@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -145,6 +146,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loginModalOpen, setLoginModalOpen] = useState(false);
   const [personalDashboardOpen, setPersonalDashboardOpen] = useState(false);
 
+  const userRef = useRef(user);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   // Restore saved session only if explicitly authenticated
   useEffect(() => {
     void testFirestoreConnection();
@@ -246,13 +252,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshAccessStatus = useCallback(async () => {
-    if (!user.id && !user.email) return;
-    const currentEmail = (user.email || "").trim().toLowerCase();
+    const currentUser = userRef.current;
+    if (!currentUser.id && !currentUser.email) return;
+    const currentEmail = (currentUser.email || "").trim().toLowerCase();
     const isSuper = currentEmail === "admin@gmail.com";
 
     try {
       const qs = new URLSearchParams({
-        user_id: user.id || "",
+        user_id: currentUser.id || "",
         email: currentEmail,
       });
       const res = await fetch(`/api/access/status?${qs.toString()}`, {
@@ -276,7 +283,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? "SUPER_ADMIN"
           : (apiUser?.role as SecurityRole) ||
             (data.role as SecurityRole) ||
-            user.securityRole ||
+            currentUser.securityRole ||
             "CREATOR";
 
         const resolvedAppRole: AppUserRole =
@@ -307,24 +314,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             return prev;
           }
 
+          const targetId = apiUser?.id || prev.id;
+          const targetUsername = apiUser?.username || prev.username;
+          const targetName = apiUser?.name || prev.name;
+          const targetBrandId = apiUser?.brand_id || prev.brand_id;
+          const targetBrandName = apiUser?.brand_name || prev.brand_name;
+          const targetDepartment = apiUser?.department || prev.department;
+          const targetRequestedRole = apiUser?.requested_role ?? null;
+          const targetRoleReqStatus = apiUser?.role_request_status ?? null;
+          const targetRoleReqNote = apiUser?.role_request_note ?? null;
+          const targetRoleReqAt = apiUser?.role_request_at ?? null;
+
+          // Only trigger state update if an actual change occurred!
+          const hasChange =
+            prev.id !== targetId ||
+            prev.username !== targetUsername ||
+            prev.name !== targetName ||
+            prev.role !== resolvedAppRole ||
+            prev.securityRole !== resolvedSecurityRole ||
+            prev.roleLabel !== roleLabel ||
+            prev.brand_id !== targetBrandId ||
+            prev.brand_name !== targetBrandName ||
+            prev.department !== targetDepartment ||
+            prev.isApproved !== isApproved ||
+            prev.lobbyAccess !== lobbyAccess ||
+            prev.status !== status ||
+            prev.requestedRole !== targetRequestedRole ||
+            prev.roleRequestStatus !== targetRoleReqStatus ||
+            prev.roleRequestNote !== targetRoleReqNote ||
+            prev.roleRequestAt !== targetRoleReqAt;
+
+          if (!hasChange) {
+            return prev;
+          }
+
           const updated: UserAccount = {
             ...prev,
-            id: apiUser?.id || prev.id,
-            username: apiUser?.username || prev.username,
-            name: apiUser?.name || prev.name,
+            id: targetId,
+            username: targetUsername,
+            name: targetName,
             role: resolvedAppRole,
             securityRole: resolvedSecurityRole,
             roleLabel,
-            brand_id: apiUser?.brand_id || prev.brand_id,
-            brand_name: apiUser?.brand_name || prev.brand_name,
-            department: apiUser?.department || prev.department,
+            brand_id: targetBrandId,
+            brand_name: targetBrandName,
+            department: targetDepartment,
             isApproved,
             lobbyAccess,
             status,
-            requestedRole: apiUser?.requested_role ?? null,
-            roleRequestStatus: apiUser?.role_request_status ?? null,
-            roleRequestNote: apiUser?.role_request_note ?? null,
-            roleRequestAt: apiUser?.role_request_at ?? null,
+            requestedRole: targetRequestedRole,
+            roleRequestStatus: targetRoleReqStatus,
+            roleRequestNote: targetRoleReqNote,
+            roleRequestAt: targetRoleReqAt,
           };
           try {
             localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(updated));
@@ -335,17 +376,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn("Failed to refresh access status:", e);
     }
-  }, [user.email, user.id, user.securityRole]);
+  }, []);
 
-  // Real-time role & permission synchronization: poll every 2.5s + on focus + on custom event
+  // Real-time role & permission synchronization: poll on focus + interval (3.5s) + on custom event
   useEffect(() => {
-    if (!isAuthenticated || (!user.id && !user.email)) return;
+    if (!isAuthenticated || !user.email) return;
 
     void refreshAccessStatus();
 
     const interval = window.setInterval(() => {
       void refreshAccessStatus();
-    }, 2500);
+    }, 3500);
 
     const handleFocus = () => void refreshAccessStatus();
     const handleRoleEvent = () => void refreshAccessStatus();
@@ -357,7 +398,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("brandlens-role-updated", handleRoleEvent);
     };
-  }, [isAuthenticated, refreshAccessStatus, user.email, user.id]);
+  }, [isAuthenticated, user.email, refreshAccessStatus]);
 
   const requestRoleChange = useCallback(
     async (requestedRole: "ADMIN" | "REVIEWER" | "CREATOR", note?: string) => {

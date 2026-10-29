@@ -1,5 +1,146 @@
 {
-  "users": [],
+  "workspaces": [
+    [
+      "b0000000-0000-4000-8000-000000000000",
+      {
+        "id": "b0000000-0000-4000-8000-000000000000",
+        "name": "Global Governance",
+        "brand_name": "Global Governance",
+        "created_at": "2026-10-29T18:54:41.088Z"
+      }
+    ],
+    [
+      "b0000001-0000-4000-8000-000000000001",
+      {
+        "id": "b0000001-0000-4000-8000-000000000001",
+        "name": "Default Workspace",
+        "brand_name": "Default Workspace",
+        "created_at": "2026-10-29T18:54:41.088Z"
+      }
+    ]
+  ],
+  "users": [
+    [
+      "u0000000-super-admin",
+      {
+        "id": "u0000000-super-admin",
+        "username": "admin@gmail.com",
+        "email": "admin@gmail.com",
+        "hashed_password": "4fc0f4c8e7cf54ee3c73896060502198ffb8d36aca711e3b5435b0dbfddd8549",
+        "role": "SUPER_ADMIN",
+        "brand_id": "b0000000-0000-4000-8000-000000000000",
+        "brand_name": "Global Governance",
+        "name": "Super Admin",
+        "department": "Platform Governance",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-29T18:54:41.089Z"
+      }
+    ],
+    [
+      "u_demo_t1",
+      {
+        "id": "u_demo_t1",
+        "username": "demo",
+        "email": "demo@t1.in",
+        "hashed_password": "8c6c7531dff5de925963773a07b72deddd2b89013bcc1c9ef14ef1860d7d5e27",
+        "role": "ADMIN",
+        "brand_id": "b0000001-0000-4000-8000-000000000001",
+        "brand_name": "Default Workspace",
+        "name": "demo",
+        "department": "Marketing",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-29T18:54:41.089Z"
+      }
+    ],
+    [
+      "u_vedant_108",
+      {
+        "id": "u_vedant_108",
+        "username": "vedantbhagat108",
+        "email": "vedantbhagat108@gmail.com",
+        "hashed_password": "a932cc5743d2be5a8444e4dd37d1384d3530921f1398739eecdbff1e26afebf0",
+        "role": "CREATOR",
+        "brand_id": "b0000001-0000-4000-8000-000000000001",
+        "brand_name": "Default Workspace",
+        "name": "vedantbhagat108",
+        "department": "Marketing",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-29T18:54:41.089Z",
+        "requested_role": null,
+        "role_request_status": "approved"
+      }
+    ]
+  ],
   "pins": [],
-  "auditLogs": []
+  "guidelines": [],
+  "submissions": [],
+  "auditLogs": [
+    {
+      "id": "17c0f7fd-07a1-48e6-b6a1-8ec51a0a50de",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "vedantbhagat108@gmail.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: vedantbhagat108@gmail.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-29T18:55:35.560Z"
+    },
+    {
+      "id": "dec9a57e-6b1f-426f-a164-362875bfde35",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "target_user": "vedantbhagat108@gmail.com",
+        "username": "vedantbhagat108",
+        "previous_role": "REVIEWER",
+        "new_role": "CREATOR",
+        "updated_by": "admin@gmail.com"
+      },
+      "details_text": "target_user: vedantbhagat108@gmail.com · username: vedantbhagat108 · previous_role: REVIEWER · new_role: CREATOR · updated_by: admin@gmail.com",
+      "timestamp": "2026-10-29T18:55:35.558Z"
+    },
+    {
+      "id": "4ae123c6-6467-4e48-9290-f165712a2bf0",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "vedantbhagat108@gmail.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: vedantbhagat108@gmail.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-29T18:55:26.946Z"
+    },
+    {
+      "id": "a906c4e6-7dfa-4dd2-a6df-ca7b8b272b7c",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "target_user": "vedantbhagat108@gmail.com",
+        "username": "vedantbhagat108",
+        "previous_role": "CREATOR",
+        "new_role": "REVIEWER",
+        "updated_by": "admin@gmail.com"
+      },
+      "details_text": "target_user: vedantbhagat108@gmail.com · username: vedantbhagat108 · previous_role: CREATOR · new_role: REVIEWER · updated_by: admin@gmail.com",
+      "timestamp": "2026-10-29T18:55:26.945Z"
+    }
+  ]
 }

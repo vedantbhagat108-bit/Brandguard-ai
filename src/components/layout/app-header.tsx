@@ -8,6 +8,7 @@ import { Avatar } from "@/components/ui/avatar";
 import { GlobalSearch } from "@/components/layout/global-search";
 import { useAuth } from "@/components/providers/auth-provider";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 function useBreadcrumbs(pathname: string) {
   if (pathname === "/") return [{ label: "Overview" }];
@@ -117,14 +118,31 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
                     {user.name}
                   </p>
                   <p className="text-[10px] leading-tight text-ink-400 flex items-center gap-1">
-                    <span>{user.role === "manager" ? "Reviewer" : "Creator"}</span>
+                    <span>
+                      {user.securityRole === "SUPER_ADMIN"
+                        ? "Super Admin"
+                        : user.securityRole === "ADMIN"
+                        ? "Admin"
+                        : user.securityRole === "REVIEWER"
+                        ? "Manager (Reviewer)"
+                        : "Creator"}
+                    </span>
                     {!user.isApproved && (
                       <span className="text-amber-600 font-bold">• Pending</span>
                     )}
                   </p>
                 </div>
                 <ShieldCheck
-                  className={`hidden h-4 w-4 sm:block ${user.role === "manager" ? "text-purple-600" : "text-mint-600"}`}
+                  className={cn(
+                    "hidden h-4 w-4 sm:block",
+                    user.securityRole === "SUPER_ADMIN"
+                      ? "text-purple-700"
+                      : user.securityRole === "ADMIN"
+                      ? "text-purple-600"
+                      : user.securityRole === "REVIEWER"
+                      ? "text-brand-600"
+                      : "text-mint-600"
+                  )}
                   aria-label="Authorised user"
                 />
               </button>

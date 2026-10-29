@@ -114,8 +114,28 @@ export default function AccessManagementPage() {
 
       if (pinsRes.ok) {
         const secData = await pinsRes.json();
-        setDbUsers(Array.isArray(secData.users) ? secData.users : []);
-        setAuditLogs(Array.isArray(secData.audit_logs) ? secData.audit_logs : []);
+        const incomingUsers = Array.isArray(secData.users) ? secData.users : [];
+        const incomingLogs = Array.isArray(secData.audit_logs) ? secData.audit_logs : [];
+
+        setDbUsers((prev) => {
+          if (
+            prev.length === incomingUsers.length &&
+            JSON.stringify(prev) === JSON.stringify(incomingUsers)
+          ) {
+            return prev;
+          }
+          return incomingUsers;
+        });
+
+        setAuditLogs((prev) => {
+          if (
+            prev.length === incomingLogs.length &&
+            JSON.stringify(prev) === JSON.stringify(incomingLogs)
+          ) {
+            return prev;
+          }
+          return incomingLogs;
+        });
       }
     } catch (e) {
       console.error(e);
@@ -126,18 +146,16 @@ export default function AccessManagementPage() {
 
   useEffect(() => {
     loadSecurityData(false);
-    refreshAccessStatus();
-  }, [loadSecurityData, refreshAccessStatus]);
+  }, [loadSecurityData]);
 
-  // Poll every 2.5s so role changes & requests reflect ASAP across sessions
+  // Poll every 3.5s so role changes & requests reflect ASAP across sessions
   useEffect(() => {
     if (!isAuthenticated) return;
     const interval = window.setInterval(() => {
       loadSecurityData(true);
-      refreshAccessStatus();
-    }, 2500);
+    }, 3500);
     return () => window.clearInterval(interval);
-  }, [isAuthenticated, loadSecurityData, refreshAccessStatus]);
+  }, [isAuthenticated, loadSecurityData]);
 
   const handleGrantAction = async (
     targetUserId: string,
