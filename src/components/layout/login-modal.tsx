@@ -52,6 +52,7 @@ export function LoginModal() {
   const [signupRole, setSignupRole] = useState<SecurityRole>("CREATOR");
   const [signupDepartment, setSignupDepartment] = useState("Marketing");
   const [signupWorkspace, setSignupWorkspace] = useState("");
+  const [signupPinCode, setSignupPinCode] = useState("");
 
   // 3. Forgot Password / Reset Password state
   const [forgotIdentifier, setForgotIdentifier] = useState("");
@@ -113,6 +114,7 @@ export function LoginModal() {
       department: signupDepartment,
       workspace_name: signupWorkspace.trim(),
       brand_name: signupWorkspace.trim(),
+      pin_code: signupPinCode.trim() || undefined,
     });
     setSubmitting(false);
 
@@ -127,6 +129,7 @@ export function LoginModal() {
       setSignupName("");
       setSignupEmail("");
       setSignupWorkspace("");
+      setSignupPinCode("");
     } else {
       toast({
         title: "Could Not Create Account",
@@ -445,6 +448,22 @@ export function LoginModal() {
                     className="w-full rounded-lg border border-line px-3 py-2 text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-ink-800 mb-1">
+                  BrandPIN (Optional - Instant Clearance)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. ECO-8821 (Unlocks immediate approval & lobby rights)"
+                  value={signupPinCode}
+                  onChange={(e) => setSignupPinCode(e.target.value.toUpperCase())}
+                  className="w-full rounded-lg border border-line px-3 py-2 text-xs font-mono font-bold uppercase text-ink-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                />
+                <p className="text-[11px] text-ink-500 mt-1">
+                  If you have a 1-time BrandPIN from your admin, enter it to verify and activate lobby clearance immediately.
+                </p>
               </div>
 
               <button

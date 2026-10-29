@@ -17,6 +17,15 @@
         "brand_name": "Default Workspace",
         "created_at": "2026-10-29T18:54:41.088Z"
       }
+    ],
+    [
+      "ws_e763e6d9-ec1c-44f4-a62a-2a22ad0f421f",
+      {
+        "id": "ws_e763e6d9-ec1c-44f4-a62a-2a22ad0f421f",
+        "name": "Test Brand",
+        "brand_name": "Test Brand",
+        "created_at": "2026-10-29T21:33:08.947Z"
+      }
     ]
   ],
   "users": [
@@ -74,10 +83,152 @@
       }
     ]
   ],
-  "pins": [],
+  "pins": [
+    [
+      "TESTPIN-1785",
+      {
+        "id": "563b8acf-1da2-497e-8c97-0eb53743e050",
+        "brand_id": "b0000000-0000-4000-8000-000000000000",
+        "brand_name": "Global Governance",
+        "pin_code": "TESTPIN-1785",
+        "created_by_id": "u0000000-super-admin",
+        "created_by_email": "admin@gmail.com",
+        "created_at": "2026-10-29T21:33:08.691Z",
+        "expires_at": "2026-11-05T21:33:08.691Z",
+        "is_used": true,
+        "used_by_email": "testcreator_1793309588706@test.com",
+        "used_at": "2026-10-29T21:33:09.167Z"
+      }
+    ]
+  ],
   "guidelines": [],
   "submissions": [],
   "auditLogs": [
+    {
+      "id": "a1179666-bfde-4559-854b-652e502e65eb",
+      "brand_id": "b0000000-0000-4000-8000-000000000000",
+      "user_id": "5189aa57-4907-404b-b392-5a9e24ae2abd",
+      "user_email": "testcreator_1793309588706@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "USER_ACCOUNT_DELETED",
+      "details": {
+        "email": "testcreator_1793309588706@test.com",
+        "username": "testcreator_1793309588706",
+        "name": "Testcreator 1793309588706",
+        "role": "CREATOR"
+      },
+      "details_text": "email: testcreator_1793309588706@test.com · username: testcreator_1793309588706 · name: Testcreator 1793309588706 · role: CREATOR",
+      "timestamp": "2026-10-29T21:33:09.614Z"
+    },
+    {
+      "id": "a0f9a9bc-f37b-457e-b734-7c5df8e7a5a5",
+      "brand_id": "b0000000-0000-4000-8000-000000000000",
+      "user_id": "brand-pin-burn",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "LOBBY_ACCESS_UPDATED",
+      "details": {
+        "target_user": "testcreator_1793309588706@test.com",
+        "username": "testcreator_1793309588706",
+        "lobby_rights": "GRANTED",
+        "updated_by": "system"
+      },
+      "details_text": "target_user: testcreator_1793309588706@test.com · username: testcreator_1793309588706 · lobby_rights: GRANTED · updated_by: system",
+      "timestamp": "2026-10-29T21:33:09.169Z"
+    },
+    {
+      "id": "3a195147-12cd-4135-953f-00fe58a2a483",
+      "brand_id": "b0000000-0000-4000-8000-000000000000",
+      "user_id": "brand-pin-burn",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "testcreator_1793309588706@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: testcreator_1793309588706@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-29T21:33:09.169Z"
+    },
+    {
+      "id": "03855dae-1135-4b91-99da-c2fec0a308f4",
+      "brand_id": "b0000000-0000-4000-8000-000000000000",
+      "user_id": null,
+      "user_email": "testcreator_1793309588706@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "PIN_BURNED",
+      "details": {
+        "pin_code": "TESTPIN-1785",
+        "used_by_email": "testcreator_1793309588706@test.com",
+        "brand": "Global Governance"
+      },
+      "details_text": "pin_code: TESTPIN-1785 · used_by_email: testcreator_1793309588706@test.com · brand: Global Governance",
+      "timestamp": "2026-10-29T21:33:09.167Z"
+    },
+    {
+      "id": "703e5dc9-0088-4d25-83d8-950246d49d39",
+      "brand_id": "ws_e763e6d9-ec1c-44f4-a62a-2a22ad0f421f",
+      "user_id": "5189aa57-4907-404b-b392-5a9e24ae2abd",
+      "user_email": "testcreator_1793309588706@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "USER_REGISTERED",
+      "details": {
+        "username": "testcreator_1793309588706",
+        "email": "testcreator_1793309588706@test.com",
+        "role": "CREATOR",
+        "redeemed_pin": "Direct Account Signup",
+        "brand": "Test Brand"
+      },
+      "details_text": "username: testcreator_1793309588706 · email: testcreator_1793309588706@test.com · role: CREATOR · redeemed_pin: Direct Account Signup · brand: Test Brand",
+      "timestamp": "2026-10-29T21:33:08.951Z"
+    },
+    {
+      "id": "d400df92-c5ab-4fb4-b654-3f67126236a9",
+      "brand_id": "ws_e763e6d9-ec1c-44f4-a62a-2a22ad0f421f",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "LOBBY_ACCESS_UPDATED",
+      "details": {
+        "target_user": "testcreator_1793309588706@test.com",
+        "username": "testcreator_1793309588706",
+        "lobby_rights": "GRANTED",
+        "updated_by": "system"
+      },
+      "details_text": "target_user: testcreator_1793309588706@test.com · username: testcreator_1793309588706 · lobby_rights: GRANTED · updated_by: system",
+      "timestamp": "2026-10-29T21:33:08.951Z"
+    },
+    {
+      "id": "e9c229dd-71db-4c09-92e5-72713fd56b43",
+      "brand_id": "ws_e763e6d9-ec1c-44f4-a62a-2a22ad0f421f",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "testcreator_1793309588706@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: testcreator_1793309588706@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-29T21:33:08.950Z"
+    },
+    {
+      "id": "f8e1e630-a4a6-40b1-b1e8-64e6dd96b699",
+      "brand_id": "b0000000-0000-4000-8000-000000000000",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "PIN_GENERATED",
+      "details": {
+        "pin_code": "TESTPIN-1785",
+        "brand": "Global Governance",
+        "generated_by": "admin@gmail.com"
+      },
+      "details_text": "pin_code: TESTPIN-1785 · brand: Global Governance · generated_by: admin@gmail.com",
+      "timestamp": "2026-10-29T21:33:08.691Z"
+    },
     {
       "id": "17c0f7fd-07a1-48e6-b6a1-8ec51a0a50de",
       "brand_id": "b0000001-0000-4000-8000-000000000001",
@@ -142,5 +293,10 @@
       "details_text": "target_user: vedantbhagat108@gmail.com · username: vedantbhagat108 · previous_role: CREATOR · new_role: REVIEWER · updated_by: admin@gmail.com",
       "timestamp": "2026-10-29T18:55:26.945Z"
     }
+  ],
+  "deletedUserEmails": [
+    "5189aa57-4907-404b-b392-5a9e24ae2abd",
+    "testcreator_1793309588706@test.com",
+    "testcreator_1793309588706"
   ]
 }

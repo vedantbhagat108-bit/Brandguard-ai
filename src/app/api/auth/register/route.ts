@@ -158,6 +158,13 @@ export async function POST(req: NextRequest) {
         action: 'approve',
         department,
       });
+      updateAccessGrant({
+        manager_id: pinVerified ? 'system-pin-burn' : 'self-registered',
+        manager_role: 'admin',
+        target_user_id: newUser.id,
+        action: 'grant_lobby',
+        department,
+      });
     }
 
     securityDB.logAudit({

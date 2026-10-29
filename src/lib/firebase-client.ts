@@ -15,6 +15,7 @@ import {
   getDoc,
   setDoc,
   updateDoc,
+  deleteDoc,
   getDocFromServer,
   serverTimestamp,
 } from "firebase/firestore";
@@ -287,6 +288,28 @@ export async function signOutFromFirebase(): Promise<void> {
   try {
     await firebaseSignOut(auth);
   } catch {}
+}
+
+export async function deleteCrossDeviceProfileFromFirestore(uid: string): Promise<boolean> {
+  if (!uid) return false;
+  try {
+    const userRef = doc(db, "users", uid);
+    const privateRef = doc(db, "users", uid, "private", "info");
+    const adminRef = doc(db, "admins", uid);
+    try {
+      await deleteDoc(privateRef);
+    } catch {}
+    try {
+      await deleteDoc(userRef);
+    } catch {}
+    try {
+      await deleteDoc(adminRef);
+    } catch {}
+    return true;
+  } catch (err) {
+    console.warn("Could not delete cross device profile from Firestore:", err);
+    return false;
+  }
 }
 
 export { onAuthStateChanged, type FirebaseUser };

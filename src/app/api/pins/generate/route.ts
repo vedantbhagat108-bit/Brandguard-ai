@@ -28,26 +28,34 @@ export async function POST(req: NextRequest) {
       }
     } else {
       // Fallback to header role/id for seamless UI integration
-      const roleHeader = (req.headers.get('x-user-role') || '').toUpperCase();
+      const roleHeader = (
+        req.headers.get('x-security-role') ||
+        req.headers.get('x-user-role') ||
+        ''
+      ).toUpperCase();
       const userIdHeader = req.headers.get('x-user-id');
       if (userIdHeader && securityDB.users.has(userIdHeader)) {
         adminUser = securityDB.users.get(userIdHeader);
-      } else if (roleHeader === 'ADMIN' || roleHeader === 'MANAGER') {
-        adminUser = securityDB.findUserByEmail('admin@ecofresh.com');
+      } else if (
+        roleHeader === 'SUPER_ADMIN' ||
+        roleHeader === 'ADMIN' ||
+        roleHeader === 'MANAGER'
+      ) {
+        adminUser = securityDB.findUserByEmail('admin@gmail.com');
       } else if (roleHeader) {
         return NextResponse.json(
-          { detail: `Access denied: Operation requires ADMIN role. Current role: ${roleHeader}` },
+          { detail: `Access denied: Operation requires ADMIN or SUPER_ADMIN role. Current role: ${roleHeader}` },
           { status: 403 }
         );
       } else {
-        adminUser = securityDB.findUserByEmail('admin@ecofresh.com');
+        adminUser = securityDB.findUserByEmail('admin@gmail.com');
       }
     }
 
-    if (!adminUser || adminUser.role !== 'ADMIN') {
+    if (!adminUser || (adminUser.role !== 'ADMIN' && adminUser.role !== 'SUPER_ADMIN')) {
       return NextResponse.json(
         {
-          detail: `Access denied: Operation requires ADMIN role. Current role: ${adminUser?.role || 'CREATOR'}`,
+          detail: `Access denied: Operation requires ADMIN or SUPER_ADMIN role. Current role: ${adminUser?.role || 'CREATOR'}`,
         },
         { status: 403 }
       );

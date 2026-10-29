@@ -201,6 +201,7 @@ export class MultiTenantSecurityDB {
   public guidelines = new Map<string, BrandGuidelineRecord>();
   public submissions = new Map<string, SubmissionRecord>();
   public auditLogs: AuditLogRecord[] = [];
+  public deletedUserEmails = new Set<string>();
 
   constructor() {
     this.seedWorkspacesAndGuidelines();
@@ -286,8 +287,9 @@ export class MultiTenantSecurityDB {
     const now = new Date().toISOString();
 
     // Ensure demo account exists (preserves role if already set, e.g. ADMIN)
+    const demoDeleted = this.deletedUserEmails.has('demo@t1.in') || this.deletedUserEmails.has('demo');
     const existingDemo = this.findUserByEmail('demo@t1.in') || this.findUserByUsername('demo');
-    if (!existingDemo) {
+    if (!existingDemo && !demoDeleted) {
       const demoUser: DBUserRecord = {
         id: 'u_demo_t1',
         username: 'demo',
@@ -306,8 +308,13 @@ export class MultiTenantSecurityDB {
     }
 
     // Ensure vedantbhagat108 account exists
-    const existingVedant = this.findUserByEmail('vedantbhagat108@gmail.com') || this.findUserByUsername('vedantbhagat108');
-    if (!existingVedant) {
+    const vedantDeleted =
+      this.deletedUserEmails.has('vedantbhagat108@gmail.com') ||
+      this.deletedUserEmails.has('vedantbhagat108');
+    const existingVedant =
+      this.findUserByEmail('vedantbhagat108@gmail.com') ||
+      this.findUserByUsername('vedantbhagat108');
+    if (!existingVedant && !vedantDeleted) {
       const vedantUser: DBUserRecord = {
         id: 'u_vedant_108',
         username: 'vedantbhagat108',
@@ -362,6 +369,7 @@ export class MultiTenantSecurityDB {
   public findUserByIdOrIdentifier(identifier: string): DBUserRecord | undefined {
     const clean = (identifier || '').trim();
     if (!clean) return undefined;
+    if (this.deletedUserEmails.has(clean.toLowerCase())) return undefined;
     const byId = this.users.get(clean);
     if (byId) return byId;
     return this.findUserByUsernameOrEmail(clean);
@@ -370,6 +378,7 @@ export class MultiTenantSecurityDB {
   public findUserByEmail(email: string): DBUserRecord | undefined {
     const clean = (email || '').trim().toLowerCase();
     if (!clean) return undefined;
+    if (this.deletedUserEmails.has(clean)) return undefined;
     for (const u of this.users.values()) {
       if (u.email.toLowerCase() === clean) return u;
     }
@@ -379,6 +388,7 @@ export class MultiTenantSecurityDB {
   public findUserByUsername(username: string): DBUserRecord | undefined {
     const clean = (username || '').trim().toLowerCase();
     if (!clean) return undefined;
+    if (this.deletedUserEmails.has(clean)) return undefined;
     for (const u of this.users.values()) {
       if (
         u.username.toLowerCase() === clean ||
@@ -393,6 +403,7 @@ export class MultiTenantSecurityDB {
   public findUserByUsernameOrEmail(identifier: string): DBUserRecord | undefined {
     const clean = (identifier || '').trim().toLowerCase();
     if (!clean) return undefined;
+    if (this.deletedUserEmails.has(clean)) return undefined;
     for (const u of this.users.values()) {
       if (
         u.email.toLowerCase() === clean ||
@@ -687,12 +698,30 @@ export class MultiTenantSecurityDB {
   public deleteUserAccount(userIdOrEmail: string): boolean {
     this.loadFromDisk();
     const user = this.findUserByIdOrIdentifier(userIdOrEmail);
-    if (!user) return false;
+    const cleanId = (userIdOrEmail || '').trim().toLowerCase();
+
+    if (!user) {
+      if (cleanId) {
+        this.deletedUserEmails.add(cleanId);
+        this.saveToDisk();
+      }
+      return false;
+    }
 
     if (user.role === 'SUPER_ADMIN' || user.email.toLowerCase() === 'admin@gmail.com') {
       const err: any = new Error('Cannot delete primary Super Admin account.');
       err.status = 400;
       throw err;
+    }
+
+    // Add to permanent deletion tombstone set
+    this.deletedUserEmails.add(user.id);
+    this.deletedUserEmails.add(user.email.toLowerCase());
+    if (user.username) {
+      this.deletedUserEmails.add(user.username.toLowerCase());
+    }
+    if (cleanId) {
+      this.deletedUserEmails.add(cleanId);
     }
 
     this.users.delete(user.id);
@@ -874,6 +903,7 @@ export class MultiTenantSecurityDB {
         guidelines: Array.from(this.guidelines.entries()),
         submissions: Array.from(this.submissions.entries()),
         auditLogs: this.auditLogs.slice(0, 250),
+        deletedUserEmails: Array.from(this.deletedUserEmails),
       };
       const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
       fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
@@ -911,6 +941,12 @@ export class MultiTenantSecurityDB {
 
       const parsed = JSON.parse(raw);
 
+      if (Array.isArray(parsed.deletedUserEmails)) {
+        this.deletedUserEmails = new Set(
+          parsed.deletedUserEmails.map((e: string) => String(e).toLowerCase().trim())
+        );
+      }
+
       if (Array.isArray(parsed.workspaces)) {
         for (const item of parsed.workspaces) {
           let id: string | undefined;
@@ -938,6 +974,16 @@ export class MultiTenantSecurityDB {
             u = item;
           }
           if (id && u && u.email && !LEGACY_DEMO_USER_IDS.has(id)) {
+            const emailLower = u.email.toLowerCase().trim();
+            const idLower = id.toLowerCase().trim();
+            const usernameLower = (u.username || '').toLowerCase().trim();
+            if (
+              this.deletedUserEmails.has(emailLower) ||
+              this.deletedUserEmails.has(idLower) ||
+              (usernameLower && this.deletedUserEmails.has(usernameLower))
+            ) {
+              continue; // Do NOT load permanently deleted user
+            }
             if (u.email.toLowerCase() === 'admin@gmail.com') {
               u.role = 'SUPER_ADMIN';
             }

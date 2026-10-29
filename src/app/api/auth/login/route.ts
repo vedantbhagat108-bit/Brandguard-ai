@@ -20,6 +20,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (securityDB.deletedUserEmails.has(loginId.toLowerCase())) {
+      return NextResponse.json(
+        { detail: 'This account has been permanently deleted.' },
+        { status: 403 }
+      );
+    }
+
     const user = securityDB.findUserByUsernameOrEmail(loginId);
 
     if (!user || !verifyPassword(password, user.hashed_password)) {

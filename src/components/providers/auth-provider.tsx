@@ -17,6 +17,7 @@ import {
   syncAccountToFirestore,
   signInWithGoogleCrossDevice,
   signOutFromFirebase,
+  deleteCrossDeviceProfileFromFirestore,
 } from "@/lib/firebase-client";
 
 export type AppUserRole = "manager" | "content_creator";
@@ -265,8 +266,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const res = await fetch(`/api/access/status?${qs.toString()}`, {
         cache: "no-store",
       });
+      if (res.status === 410) {
+        logout();
+        return;
+      }
       if (res.ok) {
         const data = await res.json();
+        if (data.deleted === true) {
+          logout();
+          return;
+        }
         const apiUser = data.user;
 
         // If returned user email doesn't match active session email, NEVER overwrite the active session!
@@ -772,6 +781,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               brand_id: cloudProfile.brand_id,
             }),
           });
+          if (syncRes.status === 410) {
+            // Account was deleted across devices! Clean up Firestore and sign out immediately.
+            if (fbUser.uid) {
+              void deleteCrossDeviceProfileFromFirestore(fbUser.uid);
+            }
+            void signOutFromFirebase();
+            logout();
+            return;
+          }
           if (syncRes.ok) {
             const syncData = await syncRes.json();
             const restored = mapBackendUserToAccount(
@@ -790,7 +808,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => unsubscribe();
-  }, [mapBackendUserToAccount]);
+  }, [logout, mapBackendUserToAccount]);
 
   const isSuperAdmin = user.securityRole === "SUPER_ADMIN";
   const isAdmin =
@@ -873,6 +891,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { ok: false, error: "Must be signed in to delete account." };
     }
     try {
+      // 1. Purge cross-device Firestore profile documents first
+      if (auth.currentUser?.uid) {
+        try {
+          await deleteCrossDeviceProfileFromFirestore(auth.currentUser.uid);
+        } catch (err) {
+          console.warn("Could not delete Firebase UID doc:", err);
+        }
+      }
+      if (user.id && user.id !== auth.currentUser?.uid) {
+        try {
+          await deleteCrossDeviceProfileFromFirestore(user.id);
+        } catch (err) {
+          console.warn("Could not delete user.id doc:", err);
+        }
+      }
+
+      // 2. Call backend profile endpoint to delete account, purge lobby rooms, reviews, and add tombstone
       const res = await fetch("/api/user/profile", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -886,8 +921,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!res.ok) {
         return { ok: false, error: data.error || "Failed to delete account." };
       }
+
+      // 3. Clean up Firebase Auth & local credentials
+      try {
+        await signOutFromFirebase();
+      } catch {}
+
+      try {
+        localStorage.removeItem(STORAGE_AUTH_KEY);
+        localStorage.removeItem(STORAGE_AUTH_ACTIVE_KEY);
+      } catch {}
+
       logout();
       setPersonalDashboardOpen(false);
+
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("brandlens-role-updated"));
+        window.dispatchEvent(new Event("brandlens-account-deleted"));
+      }
+
       return { ok: true };
     } catch (e: any) {
       return { ok: false, error: e.message || "Network error" };

@@ -30,8 +30,16 @@ function syncGrantsFromSecurityDB() {
   securityDB.loadFromDisk();
   securityDB.purgeLegacyDemoRecords();
   for (const key of Array.from(accessGrants.keys())) {
+    const existing = accessGrants.get(key);
+    const emailLower = (existing?.email || '').toLowerCase().trim();
+    if (
+      securityDB.deletedUserEmails.has(key.toLowerCase()) ||
+      (emailLower && securityDB.deletedUserEmails.has(emailLower))
+    ) {
+      accessGrants.delete(key);
+      continue;
+    }
     if (!securityDB.users.has(key)) {
-      const existing = accessGrants.get(key);
       if (existing && securityDB.findUserByEmail(existing.email) === undefined) {
         accessGrants.delete(key);
       }
@@ -139,6 +147,22 @@ export function requestDatabaseAccess(params: {
 export function getAccessStatus(userId: string, email?: string | null) {
   syncGrantsFromSecurityDB();
   const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanId = (userId || '').trim().toLowerCase();
+
+  // If this account was deleted, return deleted: true immediately and never auto-provision
+  if (
+    (cleanEmail && securityDB.deletedUserEmails.has(cleanEmail)) ||
+    (cleanId && securityDB.deletedUserEmails.has(cleanId))
+  ) {
+    return {
+      deleted: true,
+      is_approved: false,
+      lobby_access: false,
+      role: 'CREATOR',
+      message: 'Account has been deleted and purged from all workspaces.',
+    };
+  }
+
   const isSuper = cleanEmail === 'admin@gmail.com';
 
   let dbUser =
@@ -149,8 +173,8 @@ export function getAccessStatus(userId: string, email?: string | null) {
     dbUser.role = 'SUPER_ADMIN';
   }
 
-  // If an authenticated user with an email is not yet in securityDB, provision them with lobby_access: true
-  if (!dbUser && cleanEmail && cleanEmail.includes('@')) {
+  // If an authenticated user with an email is not yet in securityDB, provision them with lobby_access: true (unless deleted)
+  if (!dbUser && cleanEmail && cleanEmail.includes('@') && !securityDB.deletedUserEmails.has(cleanEmail)) {
     const defaultBrandId = isSuper
       ? 'b0000000-0000-4000-8000-000000000000'
       : 'b0000001-0000-4000-8000-000000000001';

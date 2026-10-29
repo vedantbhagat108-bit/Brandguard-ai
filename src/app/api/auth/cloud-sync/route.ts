@@ -37,6 +37,18 @@ export async function POST(req: NextRequest) {
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
+    const cleanUid = String(uid || "").trim();
+
+    if (
+      securityDB.deletedUserEmails.has(normalizedEmail) ||
+      (cleanUid && securityDB.deletedUserEmails.has(cleanUid))
+    ) {
+      return NextResponse.json(
+        { detail: "This account has been permanently deleted and cannot be synchronized." },
+        { status: 410 }
+      );
+    }
+
     const cleanUsername = String(
       username || normalizedEmail.split("@")[0] || "cloud_user"
     )

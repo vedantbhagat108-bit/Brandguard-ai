@@ -19,6 +19,10 @@ import {
   Check,
   X,
   User,
+  Copy,
+  Sparkles,
+  Ticket,
+  Send,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/providers/toast-provider";
@@ -44,6 +48,26 @@ interface DBUserSummary {
   role_request_at?: string | null;
   created_at: string;
   password_updated_at?: string | null;
+}
+
+interface BrandPinSummary {
+  id: string;
+  brand_id: string;
+  brand_name: string;
+  pin_code: string;
+  created_by_email: string;
+  created_at: string;
+  expires_at: string;
+  is_used: boolean;
+  used_by_email?: string | null;
+  used_at?: string | null;
+}
+
+interface WorkspaceSummary {
+  id: string;
+  name: string;
+  brand_name?: string;
+  created_at?: string;
 }
 
 interface AuditLogEntry {
@@ -100,9 +124,19 @@ export default function AccessManagementPage() {
   const { toast } = useToast();
 
   const [dbUsers, setDbUsers] = useState<DBUserSummary[]>([]);
+  const [pins, setPins] = useState<BrandPinSummary[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
+
+  // BrandPIN Clearance states
+  const [redeemPinInput, setRedeemPinInput] = useState("");
+  const [redeemingPin, setRedeemingPin] = useState(false);
+  const [generatingPin, setGeneratingPin] = useState(false);
+  const [newPinPrefix, setNewPinPrefix] = useState("PIN");
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
+  const [copiedPin, setCopiedPin] = useState<string | null>(null);
 
   const loadSecurityData = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -116,33 +150,143 @@ export default function AccessManagementPage() {
         const secData = await pinsRes.json();
         const incomingUsers = Array.isArray(secData.users) ? secData.users : [];
         const incomingLogs = Array.isArray(secData.audit_logs) ? secData.audit_logs : [];
+        const incomingPins = Array.isArray(secData.pins) ? secData.pins : [];
+        const incomingWorkspaces = Array.isArray(secData.workspaces) ? secData.workspaces : [];
 
-        setDbUsers((prev) => {
-          if (
-            prev.length === incomingUsers.length &&
-            JSON.stringify(prev) === JSON.stringify(incomingUsers)
-          ) {
-            return prev;
-          }
-          return incomingUsers;
-        });
-
-        setAuditLogs((prev) => {
-          if (
-            prev.length === incomingLogs.length &&
-            JSON.stringify(prev) === JSON.stringify(incomingLogs)
-          ) {
-            return prev;
-          }
-          return incomingLogs;
-        });
+        setDbUsers(incomingUsers);
+        setAuditLogs(incomingLogs);
+        setPins(incomingPins);
+        setWorkspaces(incomingWorkspaces);
+        if (incomingWorkspaces.length > 0 && !selectedWorkspaceId) {
+          setSelectedWorkspaceId(incomingWorkspaces[0].id);
+        }
       }
     } catch (e) {
       console.error(e);
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [user.token]);
+  }, [selectedWorkspaceId, user.token]);
+
+  const handleCopyPin = (code: string) => {
+    try {
+      navigator.clipboard.writeText(code);
+      setCopiedPin(code);
+      setTimeout(() => setCopiedPin(null), 2500);
+      toast({
+        title: "PIN Copied",
+        description: `BrandPIN code ${code} copied to clipboard.`,
+        variant: "info",
+      });
+    } catch {}
+  };
+
+  const handleRedeemPin = async (overrideCode?: string) => {
+    const code = (overrideCode || redeemPinInput).trim();
+    if (!code) {
+      toast({
+        title: "BrandPIN Required",
+        description: "Please enter a valid BrandPIN code (e.g. ECO-8821).",
+        variant: "error",
+      });
+      return;
+    }
+
+    setRedeemingPin(true);
+    try {
+      const res = await fetch("/api/pins", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": user.id || "",
+          "X-User-Email": user.email || "",
+          ...(user.token ? { Authorization: `Bearer ${user.token}` } : {}),
+        },
+        body: JSON.stringify({
+          pin_code: code,
+          email: user.email,
+          user_id: user.id,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        toast({
+          title: "PIN Verification Failed",
+          description: data.detail || "Invalid or already burned BrandPIN.",
+          variant: "error",
+        });
+        return;
+      }
+
+      setRedeemPinInput("");
+      toast({
+        title: "Clearance Granted: Approved & Lobby Unlocked",
+        description: `BrandPIN ${code} successfully burned! Workspace clearance active for ${data.pin?.brand_name || "Workspace"}.`,
+        variant: "success",
+      });
+
+      // Instantly trigger clearance and permissions sync
+      await refreshAccessStatus();
+      await loadSecurityData(true);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
+      }
+    } catch (err: any) {
+      toast({
+        title: "Redemption Error",
+        description: err.message || "Failed to redeem BrandPIN.",
+        variant: "error",
+      });
+    } finally {
+      setRedeemingPin(false);
+    }
+  };
+
+  const handleGeneratePin = async () => {
+    setGeneratingPin(true);
+    try {
+      const res = await fetch("/api/pins/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Id": user.id || "",
+          "X-Security-Role": user.securityRole || "ADMIN",
+          ...(user.token ? { Authorization: `Bearer ${user.token}` } : {}),
+        },
+        body: JSON.stringify({
+          brand_id: selectedWorkspaceId || undefined,
+          prefix: newPinPrefix.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        toast({
+          title: "PIN Generation Failed",
+          description: data.detail || "Could not generate BrandPIN.",
+          variant: "error",
+        });
+        return;
+      }
+
+      toast({
+        title: "BrandPIN Generated",
+        description: `New single-use PIN: ${data.pin_code}. Share this with a team member to grant instant clearance.`,
+        variant: "success",
+      });
+
+      await loadSecurityData(true);
+    } catch (err: any) {
+      toast({
+        title: "Generation Error",
+        description: err.message || "Failed to generate PIN.",
+        variant: "error",
+      });
+    } finally {
+      setGeneratingPin(false);
+    }
+  };
 
   useEffect(() => {
     loadSecurityData(false);
@@ -402,6 +546,186 @@ export default function AccessManagementPage() {
           </div>
         </Card>
       </div>
+
+      {/* BRANDPIN CLEARANCE & REDEMPTION CARD */}
+      <Card className="overflow-hidden border-brand-200/90 bg-gradient-to-r from-brand-50/50 via-white to-purple-50/40 p-5 shadow-xs">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-600 text-white shadow-xs">
+                <Ticket className="h-4 w-4" />
+              </span>
+              <h3 className="text-sm font-bold text-ink-950">
+                Redeem BrandPIN for Immediate Clearance
+              </h3>
+              <span
+                className={cn(
+                  "rounded-full px-2.5 py-0.5 text-[10px] font-bold uppercase",
+                  user.isApproved && user.lobbyAccess !== false
+                    ? "bg-mint-100 text-mint-800 border border-mint-200"
+                    : user.isApproved
+                    ? "bg-amber-100 text-amber-800 border border-amber-200"
+                    : "bg-rose-100 text-rose-800 border border-rose-200"
+                )}
+              >
+                {user.isApproved && user.lobbyAccess !== false
+                  ? "Clearance Active (Approved & Lobby Granted)"
+                  : user.isApproved
+                  ? "Approved (Lobby Pending)"
+                  : "Clearance Pending"}
+              </span>
+            </div>
+            <p className="text-xs text-ink-600 leading-relaxed max-w-2xl">
+              Enter a single-use BrandPIN issued by a Workspace Admin (e.g., <code className="font-mono font-bold text-brand-700 bg-brand-100/70 px-1 py-0.5 rounded">ECO-8821</code>) to immediately verify your identity, activate your clearance status, and unlock Lobby room permissions.
+            </p>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void handleRedeemPin();
+            }}
+            className="flex items-center gap-2 shrink-0 flex-wrap sm:flex-nowrap"
+          >
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Enter PIN (e.g. ECO-8821)"
+                value={redeemPinInput}
+                onChange={(e) => setRedeemPinInput(e.target.value.toUpperCase())}
+                className="w-48 sm:w-56 rounded-xl border border-brand-200 bg-white px-3.5 py-2 text-xs font-mono font-bold uppercase tracking-wider text-ink-950 shadow-xs focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={redeemingPin || !redeemPinInput.trim()}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-brand-600 px-4 py-2 text-xs font-bold text-white shadow-xs hover:bg-brand-500 disabled:opacity-50 transition"
+            >
+              <KeyRound className={cn("h-3.5 w-3.5", redeemingPin && "animate-spin")} />
+              {redeemingPin ? "Verifying..." : "Redeem BrandPIN"}
+            </button>
+          </form>
+        </div>
+      </Card>
+
+      {/* BRANDPIN TOKEN MANAGEMENT (ADMIN & SUPER ADMIN) */}
+      {(isSuperAdmin || isAdmin) && (
+        <Card className="overflow-hidden border-line">
+          <div className="px-6 py-4 border-b border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-ink-50/30">
+            <div>
+              <h3 className="text-sm font-bold text-ink-900 flex items-center gap-2">
+                <Ticket className="h-4 w-4 text-brand-600" />
+                BrandPIN Issuance &amp; Token Registry ({pins.length})
+              </h3>
+              <p className="text-xs text-ink-500 mt-0.5">
+                Generate single-use BrandPIN tokens with custom workspace prefixes to onboard creators and grant immediate clearance.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                value={selectedWorkspaceId}
+                onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+                className="rounded-xl border border-line bg-white px-3 py-1.5 text-xs font-medium text-ink-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              >
+                {workspaces.map((ws) => (
+                  <option key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </option>
+                ))}
+              </select>
+
+              <input
+                type="text"
+                placeholder="Prefix"
+                value={newPinPrefix}
+                maxLength={6}
+                onChange={(e) => setNewPinPrefix(e.target.value.toUpperCase())}
+                className="w-20 rounded-xl border border-line bg-white px-2.5 py-1.5 text-xs font-mono font-bold uppercase text-ink-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+              />
+
+              <button
+                type="button"
+                onClick={handleGeneratePin}
+                disabled={generatingPin}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-purple-600 px-3.5 py-1.5 text-xs font-bold text-white shadow-xs hover:bg-purple-500 disabled:opacity-50 transition"
+              >
+                <Sparkles className={cn("h-3.5 w-3.5", generatingPin && "animate-spin")} />
+                {generatingPin ? "Generating..." : "Generate BrandPIN"}
+              </button>
+            </div>
+          </div>
+
+          <div className="divide-y divide-line max-h-72 overflow-y-auto">
+            {pins.length === 0 ? (
+              <div className="p-6 text-center text-xs text-ink-500">
+                No BrandPINs issued yet. Generate your first BrandPIN above.
+              </div>
+            ) : (
+              pins.map((pin) => {
+                const isExpired = new Date(pin.expires_at).getTime() < Date.now();
+                return (
+                  <div
+                    key={pin.id || pin.pin_code}
+                    className="px-6 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs hover:bg-ink-50/40"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="font-mono text-xs font-bold bg-ink-100 text-ink-950 px-2 py-1 rounded-lg border border-line">
+                        {pin.pin_code}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyPin(pin.pin_code)}
+                        className="text-ink-400 hover:text-ink-800 transition p-1"
+                        title="Copy PIN Code"
+                      >
+                        <Copy className="h-3.5 w-3.5" />
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-ink-800">
+                          {pin.brand_name || "Workspace"}
+                        </span>
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-bold",
+                            pin.is_used
+                              ? "bg-ink-100 text-ink-500"
+                              : isExpired
+                              ? "bg-rose-100 text-rose-700"
+                              : "bg-mint-100 text-mint-800 border border-mint-200"
+                          )}
+                        >
+                          {pin.is_used
+                            ? `Redeemed by ${pin.used_by_email || "user"}`
+                            : isExpired
+                            ? "Expired"
+                            : "Active (Single-Use)"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-ink-400">
+                        Expires: {new Date(pin.expires_at).toLocaleDateString()}
+                      </span>
+                      {!pin.is_used && (
+                        <button
+                          type="button"
+                          onClick={() => handleRedeemPin(pin.pin_code)}
+                          disabled={redeemingPin}
+                          className="rounded-lg border border-brand-200 bg-brand-50 px-2 py-1 text-[10px] font-bold text-brand-700 hover:bg-brand-100 transition"
+                        >
+                          Redeem Now
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </Card>
+      )}
 
       {/* SUPER ADMIN: PENDING ROLE CHANGE REQUESTS */}
       {isSuperAdmin && pendingRoleRequests.length > 0 && (
@@ -736,20 +1060,32 @@ export default function AccessManagementPage() {
 
               <div>
                 {!user.isApproved ? (
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={async () => {
-                      await requestAccess();
-                      toast({
-                        title: "Request submitted",
-                        description: "Your access request has been forwarded.",
-                        variant: "success",
-                      });
-                    }}
-                  >
-                    Submit Access Request
-                  </Button>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      onClick={async () => {
+                        await requestAccess();
+                        toast({
+                          title: "Request submitted",
+                          description: "Your access request has been forwarded to Super Admin.",
+                          variant: "success",
+                        });
+                      }}
+                    >
+                      Submit Access Request
+                    </Button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        window.scrollTo({ top: 200, behavior: "smooth" });
+                      }}
+                      className="inline-flex items-center gap-1 rounded-xl border border-brand-200 bg-white px-3 py-1.5 text-xs font-semibold text-brand-700 hover:bg-brand-50 transition shadow-xs"
+                    >
+                      <Ticket className="h-3.5 w-3.5" />
+                      Redeem BrandPIN
+                    </button>
+                  </div>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-mint-100 px-3 py-1 text-xs font-bold text-mint-800">
                     <CheckCircle2 className="h-3.5 w-3.5" /> Clearance Active
