@@ -147,7 +147,7 @@ class MockReviewService implements ReviewService {
       }
     }
 
-    const seeded = createSeedReviews();
+    const seeded: Review[] = [];
     this.cache = seeded;
     this.persist(seeded);
     return seeded;

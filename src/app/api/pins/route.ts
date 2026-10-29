@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { securityDB } from '@/backend/database.ts';
+import { pinIpLimiter, RateLimitError } from '@/backend/rateLimiter.ts';
 
 export const runtime = 'nodejs';
 
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
 
   let pins = Array.from(securityDB.pins.values()).map((p) => ({
     ...p,
-    brand_name: p.brand_name || securityDB.workspaces.get(p.brand_id)?.name || 'EcoFresh Botanicals',
+    brand_name: p.brand_name || securityDB.workspaces.get(p.brand_id)?.name || 'Default Workspace',
   }));
 
   let auditLogs = securityDB.auditLogs.map((log) => ({
@@ -45,7 +46,7 @@ export async function GET(req: NextRequest) {
     name: u.name,
     role: u.role,
     brand_id: u.brand_id,
-    brand_name: securityDB.workspaces.get(u.brand_id)?.name || 'EcoFresh Botanicals',
+    brand_name: u.brand_name || securityDB.workspaces.get(u.brand_id)?.name || 'Default Workspace',
     department: u.department,
     is_approved: u.is_approved,
     lobby_access: typeof u.lobby_access === 'boolean' ? u.lobby_access : Boolean(u.is_approved),
@@ -68,9 +69,11 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    pinIpLimiter.checkRateLimit(req);
+
     const body = await req.json();
     const { pin_code, brand_id, email, user_email } = body;
-    const targetEmail = email || user_email || 'creator@ecofresh.com';
+    const targetEmail = email || user_email || 'user@workspace.local';
 
     if (!pin_code) {
       return NextResponse.json({ detail: 'pin_code is required.' }, { status: 400 });
@@ -88,6 +91,12 @@ export async function POST(req: NextRequest) {
       message: `BrandPIN ${burned.pin_code} verified and burned for ${targetEmail}.`,
     });
   } catch (err: any) {
+    if (err instanceof RateLimitError) {
+      return NextResponse.json(
+        { detail: err.message },
+        { status: 429, headers: err.headers }
+      );
+    }
     return NextResponse.json(
       { detail: err.message || 'PIN verification failed' },
       { status: err.status || 403 }

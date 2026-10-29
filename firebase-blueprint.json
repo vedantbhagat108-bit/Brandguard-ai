@@ -1,0 +1,228 @@
+{
+  "entities": {
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Trusted administrator registry entry keyed by Firebase Auth UID.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the administrator."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["ADMIN"],
+          "maxLength": 16,
+          "description": "Fixed ADMIN role marker."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin entry was created."
+        }
+      },
+      "required": ["uid", "role", "createdAt"]
+    },
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Non-PII user profile stored in /users/{userId} for cross-device workspace access.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique user identifier matching document ID."
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the account owner."
+        },
+        "username": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_.\\-]+$",
+          "description": "Normalized login username."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Display name of the workspace member."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["ADMIN", "REVIEWER", "CREATOR"],
+          "maxLength": 16,
+          "description": "RBAC security role."
+        },
+        "brand_id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Organization brand workspace ID."
+        },
+        "brand_name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Organization brand display name."
+        },
+        "department": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Department within the organization."
+        },
+        "is_approved": {
+          "type": "boolean",
+          "description": "Whether the account is approved for workspace operations."
+        },
+        "lobby_access": {
+          "type": "boolean",
+          "description": "Whether the account has OTP Review Lobby access."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Immutable creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "userId",
+        "ownerUid",
+        "username",
+        "name",
+        "role",
+        "brand_id",
+        "brand_name",
+        "department",
+        "is_approved",
+        "lobby_access",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserPrivatePII": {
+      "title": "UserPrivatePII",
+      "description": "Isolated PII document stored in /users/{userId}/private/{docId} containing email and password hash.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Parent user ID."
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 5,
+          "maxLength": 160,
+          "description": "Private user email address."
+        },
+        "hashed_password": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 128,
+          "description": "PBKDF2-SHA256 password hash for cross-device login."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update server timestamp."
+        }
+      },
+      "required": ["userId", "ownerUid", "email", "hashed_password", "createdAt", "updatedAt"]
+    },
+    "WorkspaceSyncDoc": {
+      "title": "WorkspaceSyncDoc",
+      "description": "Organization workspace synchronization document for cross-device BrandPINs and governance state.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Workspace identifier."
+        },
+        "ownerUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the user who last synced the workspace."
+        },
+        "brand_name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Display name of the brand workspace."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "archived"],
+          "maxLength": 20,
+          "description": "Lifecycle status of the workspace."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Update server timestamp."
+        }
+      },
+      "required": ["workspaceId", "ownerUid", "brand_name", "status", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Trusted administrator lookup collection."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Public non-PII user profiles for workspace members."
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivatePII" },
+      "description": "Split collection isolating user PII (email and hashed password)."
+    },
+    "/workspaces/{workspaceId}": {
+      "schema": { "$ref": "#/entities/WorkspaceSyncDoc" },
+      "description": "Cross-device brand workspace synchronization records."
+    }
+  }
+}

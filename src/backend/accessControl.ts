@@ -9,7 +9,7 @@ export interface AccessGrant {
   name?: string;
   username?: string;
   role: UserRole;
-  security_role?: 'ADMIN' | 'REVIEWER' | 'CREATOR';
+  security_role?: 'SUPER_ADMIN' | 'ADMIN' | 'REVIEWER' | 'CREATOR';
   department: string;
   status: AccessStatus;
   lobby_access: boolean;
@@ -27,10 +27,20 @@ const accessGrants =
   (globalForAccessGrants.accessGrantsMap = new Map<string, AccessGrant>());
 
 function syncGrantsFromSecurityDB() {
+  securityDB.purgeLegacyDemoRecords();
+  for (const key of Array.from(accessGrants.keys())) {
+    if (!securityDB.users.has(key)) {
+      const existing = accessGrants.get(key);
+      if (existing && securityDB.findUserByEmail(existing.email) === undefined) {
+        accessGrants.delete(key);
+      }
+    }
+  }
+
   for (const u of securityDB.users.values()) {
     const existing = accessGrants.get(u.id);
     const mappedRole: UserRole =
-      u.role === 'ADMIN'
+      u.role === 'SUPER_ADMIN' || u.role === 'ADMIN'
         ? 'admin'
         : u.role === 'REVIEWER'
         ? 'authorised_reviewer'
@@ -48,7 +58,7 @@ function syncGrantsFromSecurityDB() {
         status: u.is_approved ? 'approved' : 'pending',
         lobby_access: typeof u.lobby_access === 'boolean' ? u.lobby_access : u.is_approved,
         requested_at: u.created_at,
-        granted_by: u.is_approved ? 'VedantBhagat@admin.in' : undefined,
+        granted_by: u.is_approved ? 'system' : undefined,
         granted_at: u.is_approved ? u.created_at : undefined,
       });
     } else {
@@ -66,7 +76,7 @@ function syncGrantsFromSecurityDB() {
 syncGrantsFromSecurityDB();
 
 export function checkUserDatabaseAccess(
-  userId: string = 'creator-1',
+  userId: string = '',
   userRole: UserRole = 'content_creator'
 ): { allowed: boolean; status: AccessStatus; lobby_access: boolean; message?: string } {
   syncGrantsFromSecurityDB();
@@ -111,7 +121,7 @@ export function requestDatabaseAccess(params: {
 
   const grant: AccessGrant = {
     user_id: params.user_id,
-    email: params.email || `${params.user_id}@company.com`,
+    email: params.email,
     role: params.role || 'content_creator',
     security_role: 'CREATOR',
     department: params.department || 'marketing',
@@ -194,7 +204,7 @@ export function updateAccessGrant(params: {
   if (!grant) {
     grant = {
       user_id: dbUser?.id || params.target_user_id,
-      email: dbUser?.email || `${params.target_user_id}@enterprise.com`,
+      email: dbUser?.email || '',
       name: dbUser?.name,
       username: dbUser?.username,
       role: 'content_creator',
@@ -220,7 +230,7 @@ export function updateAccessGrant(params: {
       securityDB.logAudit({
         brand_id: dbUser.brand_id,
         user_id: params.manager_id,
-        user_email: securityDB.findUserByIdOrIdentifier(params.manager_id)?.email || 'VedantBhagat@admin.in',
+        user_email: securityDB.findUserByIdOrIdentifier(params.manager_id)?.email || 'system',
         action: 'STATUS_UPDATED',
         details: {
           target_user: dbUser.email,

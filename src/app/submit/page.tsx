@@ -779,36 +779,6 @@ export default function SubmitPage() {
         </div>
       )}
 
-      <section
-        aria-labelledby="samples-heading"
-        className="rounded-2xl border border-brand-100 bg-gradient-to-br from-brand-50/80 via-white to-mint-50/40 p-4 sm:p-5"
-      >
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-brand-600 shadow-sm ring-1 ring-inset ring-brand-100">
-              <Sparkles className="h-[18px] w-[18px]" aria-hidden="true" />
-            </span>
-            <div>
-              <h2 id="samples-heading" className="text-[13px] font-semibold text-ink-900">
-                Start with a demo draft
-              </h2>
-              <p className="mt-0.5 text-[11px] leading-relaxed text-ink-500">
-                Pre-filled examples make the walkthrough quick. Everything is
-                synthetic and editable.
-              </p>
-            </div>
-          </div>
-          <Badge className="border-brand-200 bg-white/80 text-brand-700 normal-case tracking-normal">
-            Optional
-          </Badge>
-        </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-          {DEMO_SAMPLES.map((sample) => (
-            <SampleCard key={sample.id} sample={sample} onLoad={loadSample} />
-          ))}
-        </div>
-      </section>
-
       <div id="review-form" className="grid scroll-mt-24 gap-4 xl:grid-cols-12">
         <div className="xl:col-span-8">
           <Card className="overflow-hidden">

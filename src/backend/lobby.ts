@@ -1,4 +1,8 @@
+import fs from 'fs';
+import path from 'path';
 import { UserRole } from './types.ts';
+import { securityDB } from './database.ts';
+import { sendOtpEmail } from './emailService.ts';
 
 export interface UserSession {
   user_id: string;
@@ -37,10 +41,58 @@ export interface ReviewLobby {
   shared_brand_guidelines: string;
   created_at: string;
   status: 'active' | 'approved' | 'closed';
+  permission_granted: boolean;
   participants: LobbyParticipant[];
   manager_approved: boolean;
   notes: LobbyNoteItem[];
   last_score?: number;
+}
+
+const LEGACY_DEMO_LOBBY_CODES = new Set(['882104', '441092']);
+
+function getLobbiesStorageFilePath(): string {
+  try {
+    const localDir = path.join(process.cwd(), '.data');
+    if (!fs.existsSync(localDir)) {
+      fs.mkdirSync(localDir, { recursive: true });
+    }
+    return path.join(localDir, 'lobbies-db.json');
+  } catch {
+    return '/tmp/brandlens-lobbies-db.json';
+  }
+}
+
+export function isSuperAdminUser(
+  userId?: string | null,
+  email?: string | null,
+  securityRole?: string | null
+): boolean {
+  if ((securityRole || '').toUpperCase() === 'SUPER_ADMIN') {
+    return true;
+  }
+  const cleanId = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (cleanId) {
+    const dbById = securityDB.users.get(cleanId);
+    if (dbById?.role === 'SUPER_ADMIN') return true;
+  }
+  if (cleanEmail) {
+    const dbByEmail = securityDB.findUserByEmail(cleanEmail);
+    if (dbByEmail?.role === 'SUPER_ADMIN') return true;
+  }
+  return false;
+}
+
+export function isRoomCreator(
+  room: ReviewLobby,
+  userId?: string | null,
+  email?: string | null
+): boolean {
+  const cleanId = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (cleanId && room.manager_id === cleanId) return true;
+  if (cleanEmail && (room.created_by_email || '').toLowerCase() === cleanEmail) return true;
+  return false;
 }
 
 // In-memory sessions & lobbies preserved across route bundles
@@ -48,6 +100,7 @@ const globalForLobby = globalThis as unknown as {
   lobbySessions?: Map<string, UserSession>;
   lobbyPendingOtps?: Map<string, { otp: string; expiresAt: number; role: UserRole }>;
   reviewLobbies?: Map<string, ReviewLobby>;
+  lobbiesLoadedFromDisk?: boolean;
 };
 
 const sessions =
@@ -58,126 +111,104 @@ const pendingOtps =
 const lobbies =
   globalForLobby.reviewLobbies ?? (globalForLobby.reviewLobbies = new Map<string, ReviewLobby>());
 
+function loadLobbiesFromDisk() {
+  try {
+    const filePath = getLobbiesStorageFilePath();
+    if (!fs.existsSync(filePath)) return;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed.lobbies)) {
+      for (const [code, room] of parsed.lobbies) {
+        if (code && room && !LEGACY_DEMO_LOBBY_CODES.has(code)) {
+          lobbies.set(code, room as ReviewLobby);
+        }
+      }
+    }
+  } catch {
+    // Ignore missing or unreadable file
+  }
+}
 
-// Seed default collaborative review lobbies
-function ensureDefaultLobbies() {
-  if (lobbies.size > 0) return;
-  const now = new Date().toISOString();
-  lobbies.set('882104', {
-    lobby_code: '882104',
-    room_code: '882104',
-    title: 'EcoFresh — Miracle Metabolism Drops Live Governance Room',
-    created_by: 'Vedant Bhagat (VedantBhagat@admin.in)',
-    created_by_email: 'VedantBhagat@admin.in',
-    manager_id: 'u0000000-admin-vedant',
-    package_id: 'rev_ecofresh_miracle',
-    shared_brand_guidelines:
-      "1. Never claim products 'cure', 'treat', 'prevent', or offer a '100% guarantee' for any medical condition.\n2. Any metabolism or digestive claim must include the mandatory FDA disclaimer.\n3. Maintain an authentic, educational, and scientifically grounded tone.",
-    shared_content:
-      'Our new herbal drops are a 100% guarantee cure for slow metabolism and will eliminate all digestive fatigue within 24 hours!',
-    shared_content_draft:
-      'Our new herbal drops are a 100% guarantee cure for slow metabolism and will eliminate all digestive fatigue within 24 hours!',
-    created_at: now,
-    status: 'active',
-    manager_approved: false,
-    last_score: 24,
-    participants: [
-      {
-        user_id: 'u0000001-0000-4000-8000-000000000001',
-        name: 'Elena Rostova',
-        email: 'admin@ecofresh.com',
-        role: 'manager',
-        joined_at: now,
-      },
-      {
-        user_id: 'u0000002-0000-4000-8000-000000000002',
-        name: 'Marcus Vance',
-        email: 'reviewer@ecofresh.com',
-        role: 'authorised_reviewer',
-        joined_at: now,
-      },
-      {
-        user_id: 'u0000003-0000-4000-8000-000000000003',
-        name: 'Chloe Lin',
-        email: 'creator@ecofresh.com',
-        role: 'content_creator',
-        joined_at: now,
-      },
-    ],
-    notes: [
-      {
-        id: 'note-eco-1',
-        author_name: 'Marcus Vance (Reviewer)',
-        author_role: 'manager',
-        text: 'Please replace "100% guarantee cure" with "supports healthy natural digestive wellness" and append the mandatory FDA disclaimer.',
-        timestamp: now,
-      },
-    ],
-  });
+function saveLobbiesToDisk() {
+  try {
+    const filePath = getLobbiesStorageFilePath();
+    const payload = {
+      lobbies: Array.from(lobbies.entries()),
+      updatedAt: new Date().toISOString(),
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+  } catch {
+    // Safe fallback in read-only environments
+  }
+}
 
-  lobbies.set('441092', {
-    lobby_code: '441092',
-    room_code: '441092',
-    title: 'Aurelia Skin — Glow Renewal Serum Launch Copy',
-    created_by: 'Vedant Bhagat (VedantBhagat@admin.in)',
-    created_by_email: 'VedantBhagat@admin.in',
-    manager_id: 'u0000000-admin-vedant',
-    package_id: 'rev_glow_serum',
-    shared_brand_guidelines:
-      '1. Never claim instant overnight wrinkle erasure or 100% clinical results.\n2. Always cite clinical study sample size (n=48, 8 weeks).\n3. Include #AureliaPartner disclosure for creator captions.',
-    shared_content:
-      'Partnering with Aurelia Skin on the new Glow Renewal Serum! Clinically proven to erase 100% of wrinkles overnight.',
-    shared_content_draft:
-      'Partnering with Aurelia Skin on the new Glow Renewal Serum! Clinically proven to erase 100% of wrinkles overnight.',
-    created_at: now,
-    status: 'active',
-    manager_approved: false,
-    last_score: 46,
-    participants: [
-      {
-        user_id: 'u0000000-admin-vedant',
-        name: 'Vedant Bhagat',
-        email: 'VedantBhagat@admin.in',
-        role: 'manager',
-        joined_at: now,
-      },
-    ],
-    notes: [
-      {
-        id: 'note-aur-1',
-        author_name: 'Vedant Bhagat',
-        author_role: 'manager',
-        text: 'Collaborative review room initialized. Room PIN is confidential and visible only to the Admin creator.',
-        timestamp: now,
-      },
-    ],
-  });
+// Clean any legacy demo lobbies if present in memory and sync from disk
+function sanitizeLobbies() {
+  if (!globalForLobby.lobbiesLoadedFromDisk) {
+    loadLobbiesFromDisk();
+    globalForLobby.lobbiesLoadedFromDisk = true;
+  }
+  for (const demoCode of LEGACY_DEMO_LOBBY_CODES) {
+    lobbies.delete(demoCode);
+  }
+  for (const room of lobbies.values()) {
+    if (typeof room.permission_granted !== 'boolean') {
+      room.permission_granted = room.status !== 'closed';
+    }
+  }
 }
 
 export function listLobbies(): ReviewLobby[] {
-  ensureDefaultLobbies();
-  for (const room of lobbies.values()) {
-    if (!room.created_by_email) {
-      room.created_by_email = 'VedantBhagat@admin.in';
-      room.manager_id = room.manager_id || 'u0000000-admin-vedant';
-    }
-    if (Array.isArray(room.notes)) {
-      room.notes = room.notes.map((n) => ({
-        ...n,
-        text: (n.text || '')
-          .replace(/Created 6-digit OTP Review Room #[A-Za-z0-9-]+/gi, 'Collaborative review room initialized. Room PIN is confidential and visible only to the Admin creator')
-          .replace(/Share 6-digit OTP code [A-Za-z0-9-]+ with creator/gi, 'Room PIN is confidential and visible only to the Admin creator'),
-      }));
-    }
-  }
+  sanitizeLobbies();
   return Array.from(lobbies.values());
 }
 
-// Generate 6-digit OTP
+export function listLobbiesForUser(params: {
+  user_id?: string | null;
+  email?: string | null;
+  security_role?: string | null;
+  role?: string | null;
+}): ReviewLobby[] {
+  sanitizeLobbies();
+  const all = Array.from(lobbies.values());
+  const userId = (params.user_id || '').trim();
+  const email = (params.email || '').trim().toLowerCase();
+  const secRole = (params.security_role || params.role || '').toUpperCase();
+
+  if (!userId && !email) {
+    return [];
+  }
+
+  // Super Admin sees ALL lobbies for oversight (grant/revoke permission or discard),
+  // but cannot enter/access the room or view its confidential PIN
+  if (isSuperAdminUser(userId, email, secRole)) {
+    return all;
+  }
+
+  // Regular Admin sees ONLY lobbies created by themselves — no one else's
+  if (secRole === 'ADMIN') {
+    return all.filter((room) => isRoomCreator(room, userId, email));
+  }
+
+  // Managers / Creators see rooms they created or rooms they have joined via PIN
+  return all.filter(
+    (room) =>
+      isRoomCreator(room, userId, email) ||
+      (room.participants || []).some(
+        (p) =>
+          p.user_id === userId ||
+          (Boolean(email) && (p.email || '').toLowerCase() === email)
+      )
+  );
+}
+
+// Generate 6-digit OTP (15 minutes expiry matching Database/email)
 export function requestOtp(email: string, role: UserRole = 'content_creator') {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 10 * 60 * 1000;
+  const expiresAt = Date.now() + 15 * 60 * 1000;
   pendingOtps.set(email.toLowerCase(), { otp, expiresAt, role });
+
+  sendOtpEmail(email, otp, 'BrandLens AI').catch(() => {});
 
   return {
     success: true,
@@ -226,17 +257,24 @@ export function getSession(token: string): UserSession | undefined {
   return sessions.get(token);
 }
 
-// Manager creates a collaborative review lobby
+// Admin creates a collaborative review lobby
 export function createLobby(params: {
   manager_id: string;
   manager_name?: string;
   manager_email: string;
+  security_role?: string;
   title: string;
   initial_content?: string;
   brand_guidelines?: string;
   package_id?: string;
 }): ReviewLobby {
-  ensureDefaultLobbies();
+  sanitizeLobbies();
+  if (isSuperAdminUser(params.manager_id, params.manager_email, params.security_role)) {
+    throw new Error(
+      'Super Admin is for governance oversight only (grant/revoke lobby permissions or discard lobbies) and cannot create or enter lobby rooms.'
+    );
+  }
+
   const lobbyCode = Math.floor(100000 + Math.random() * 900000).toString();
   const draft = params.initial_content || '';
   const guidelines =
@@ -248,7 +286,9 @@ export function createLobby(params: {
     lobby_code: lobbyCode,
     room_code: lobbyCode,
     title: params.title || 'Brand Governance Review Session',
-    created_by: params.manager_name || params.manager_email,
+    created_by: params.manager_name
+      ? `${params.manager_name} (${params.manager_email})`
+      : params.manager_email,
     created_by_email: params.manager_email,
     manager_id: params.manager_id,
     package_id: params.package_id,
@@ -257,6 +297,7 @@ export function createLobby(params: {
     shared_brand_guidelines: guidelines,
     created_at: now,
     status: 'active',
+    permission_granted: true,
     manager_approved: false,
     last_score: 85,
     participants: [
@@ -273,35 +314,61 @@ export function createLobby(params: {
         id: `note-${Date.now()}`,
         author_name: params.manager_name || params.manager_email,
         author_role: 'manager',
-        text: 'Collaborative review room initialized. Room PIN is confidential and visible only to the Admin creator.',
+        text: 'Collaborative review room created.',
         timestamp: now,
       },
     ],
   };
 
   lobbies.set(lobbyCode, lobby);
+  saveLobbiesToDisk();
   return lobby;
 }
 
-// Employee/Creator joins an existing lobby
+// Employee/Creator or Creator Admin joins an existing lobby
 export function joinLobby(params: {
   lobby_code: string;
   user_id: string;
   name?: string;
   email: string;
   role: UserRole;
+  security_role?: string;
 }): ReviewLobby {
-  ensureDefaultLobbies();
+  sanitizeLobbies();
+  if (isSuperAdminUser(params.user_id, params.email, params.security_role)) {
+    throw new Error(
+      'Super Admin cannot access or enter lobby rooms. Super Admin can only grant/revoke permissions or discard lobbies.'
+    );
+  }
+
   const lobby = lobbies.get(params.lobby_code.trim());
   if (!lobby) {
     throw new Error(`Review lobby code "${params.lobby_code}" does not exist.`);
   }
 
-  if (lobby.status === 'closed') {
-    throw new Error('This review session has been closed.');
+  if (lobby.permission_granted === false || lobby.status === 'closed') {
+    throw new Error(
+      'This lobby room currently has its permission suspended or has been closed by Super Admin.'
+    );
   }
 
-  if (!lobby.participants.some((p) => p.user_id === params.user_id)) {
+  // If the user is an Admin, they can ONLY access rooms created by themselves
+  if (
+    (params.security_role || '').toUpperCase() === 'ADMIN' &&
+    !isRoomCreator(lobby, params.user_id, params.email)
+  ) {
+    throw new Error(
+      'Admins can only access lobby rooms created by themselves.'
+    );
+  }
+
+  if (
+    !lobby.participants.some(
+      (p) =>
+        p.user_id === params.user_id ||
+        (Boolean(params.email) && p.email.toLowerCase() === params.email.toLowerCase())
+    )
+  ) {
     lobby.participants.push({
       user_id: params.user_id,
       name: params.name || params.email,
@@ -309,19 +376,47 @@ export function joinLobby(params: {
       role: params.role,
       joined_at: new Date().toISOString(),
     });
+    saveLobbiesToDisk();
   }
 
   return lobby;
 }
 
+export function discardLobby(lobbyCode: string): ReviewLobby {
+  sanitizeLobbies();
+  const code = lobbyCode.trim();
+  const existing = lobbies.get(code);
+  if (!existing) {
+    throw new Error(`Lobby "${code}" not found.`);
+  }
+  lobbies.delete(code);
+  saveLobbiesToDisk();
+  return existing;
+}
+
+export function setLobbyPermission(lobbyCode: string, granted: boolean): ReviewLobby {
+  sanitizeLobbies();
+  const code = lobbyCode.trim();
+  const existing = lobbies.get(code);
+  if (!existing) {
+    throw new Error(`Lobby "${code}" not found.`);
+  }
+  existing.permission_granted = granted;
+  existing.status = granted ? 'active' : 'closed';
+  saveLobbiesToDisk();
+  return existing;
+}
+
 export function getLobby(lobbyCode: string): ReviewLobby | undefined {
-  ensureDefaultLobbies();
+  sanitizeLobbies();
   return lobbies.get(lobbyCode.trim());
 }
 
 export function updateLobbyState(params: {
   lobby_code: string;
   user_id: string;
+  user_email?: string;
+  security_role?: string;
   author_name?: string;
   role: UserRole;
   action: 'update_content' | 'add_note' | 'manager_approve' | 'close';
@@ -331,10 +426,18 @@ export function updateLobbyState(params: {
   note?: string;
   package_id?: string;
 }): ReviewLobby {
-  ensureDefaultLobbies();
+  sanitizeLobbies();
+  if (isSuperAdminUser(params.user_id, params.user_email, params.security_role)) {
+    throw new Error('Super Admin cannot access or modify inside lobby rooms.');
+  }
+
   const lobby = lobbies.get(params.lobby_code.trim());
   if (!lobby) {
     throw new Error(`Lobby "${params.lobby_code}" not found.`);
+  }
+
+  if (lobby.permission_granted === false) {
+    throw new Error('Lobby permission has been revoked by Super Admin.');
   }
 
   if (params.action === 'update_content') {
@@ -377,5 +480,6 @@ export function updateLobbyState(params: {
     lobby.status = 'closed';
   }
 
+  saveLobbiesToDisk();
   return lobby;
 }

@@ -2,14 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { ChevronRight, Menu, ShieldCheck } from "lucide-react";
+import { ChevronRight, LogIn, LogOut, Menu, ShieldCheck } from "lucide-react";
 import { BrandLockup } from "@/components/ui/brand";
 import { Avatar } from "@/components/ui/avatar";
-import { DemoBadge } from "@/components/ui/badge";
-import { DemoGuideTrigger } from "@/components/layout/demo-guide";
 import { GlobalSearch } from "@/components/layout/global-search";
 import { useAuth } from "@/components/providers/auth-provider";
-import { DEMO_USER } from "@/lib/review-config";
+import { Button } from "@/components/ui/button";
 
 function useBreadcrumbs(pathname: string) {
   if (pathname === "/") return [{ label: "Overview" }];
@@ -17,6 +15,7 @@ function useBreadcrumbs(pathname: string) {
   if (pathname === "/lobby") return [{ label: "OTP Review Lobby" }];
   if (pathname === "/submit") return [{ label: "New review" }];
   if (pathname === "/policies") return [{ label: "Brand knowledge" }];
+  if (pathname === "/visual-assets") return [{ label: "Visual assets" }];
   if (pathname === "/access") return [{ label: "Access control & BrandPIN" }];
   if (pathname === "/insights") return [{ label: "Insights" }];
   if (pathname.startsWith("/reviews/") && pathname.endsWith("/approve")) {
@@ -37,7 +36,7 @@ function useBreadcrumbs(pathname: string) {
 export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
   const pathname = usePathname();
   const breadcrumbs = useBreadcrumbs(pathname);
-  const { user, setLoginModalOpen } = useAuth();
+  const { user, isAuthenticated, setLoginModalOpen, logout } = useAuth();
 
   return (
     <header className="sticky top-0 z-30 border-b border-line/80 bg-white/80 backdrop-blur-xl">
@@ -64,7 +63,9 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
           className="hidden min-w-0 items-center gap-1.5 lg:flex"
         >
           <span className="text-[12px] font-medium text-ink-400">
-            {user.brand_name || "EcoFresh Botanicals"}
+            {isAuthenticated
+              ? user.brand_name || "EcoFresh Botanicals"
+              : "BrandLens AI"}
           </span>
           {breadcrumbs.map((item, index) => (
             <span key={`${item.label}-${index}`} className="flex items-center gap-1.5">
@@ -88,38 +89,55 @@ export function AppHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-          <GlobalSearch />
-          <DemoBadge className="hidden lg:inline-flex" />
-          <DemoGuideTrigger
-            variant="ghost"
-            iconOnly
-            className="text-ink-400"
-          />
+        <div className="ml-auto flex items-center gap-2">
+          {isAuthenticated && <GlobalSearch />}
           <div className="mx-1 hidden h-6 w-px bg-line sm:block" />
-          <button
-            type="button"
-            onClick={() => setLoginModalOpen(true)}
-            className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-ink-100 transition cursor-pointer text-left"
-            title={`${user.name} · ${user.roleLabel} (Click to switch account)`}
-          >
-            <Avatar name={user.name} size="sm" />
-            <div className="hidden xl:block">
-              <p className="text-[12px] font-semibold leading-tight text-ink-900">
-                {user.name}
-              </p>
-              <p className="text-[10px] leading-tight text-ink-400 flex items-center gap-1">
-                <span>{user.role === "manager" ? "Reviewer" : "Creator"}</span>
-                {!user.isApproved && (
-                  <span className="text-amber-600 font-bold">• Pending</span>
-                )}
-              </p>
+
+          {!isAuthenticated ? (
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => setLoginModalOpen(true)}
+            >
+              <LogIn className="h-4 w-4" aria-hidden="true" />
+              Sign in
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setLoginModalOpen(true)}
+                className="flex items-center gap-2 rounded-xl p-1.5 hover:bg-ink-100 transition cursor-pointer text-left"
+                title={`${user.name} · ${user.roleLabel} (Click to switch account)`}
+              >
+                <Avatar name={user.name} size="sm" />
+                <div className="hidden xl:block">
+                  <p className="text-[12px] font-semibold leading-tight text-ink-900">
+                    {user.name}
+                  </p>
+                  <p className="text-[10px] leading-tight text-ink-400 flex items-center gap-1">
+                    <span>{user.role === "manager" ? "Reviewer" : "Creator"}</span>
+                    {!user.isApproved && (
+                      <span className="text-amber-600 font-bold">• Pending</span>
+                    )}
+                  </p>
+                </div>
+                <ShieldCheck
+                  className={`hidden h-4 w-4 sm:block ${user.role === "manager" ? "text-purple-600" : "text-mint-600"}`}
+                  aria-label="Authorised user"
+                />
+              </button>
+              <button
+                type="button"
+                onClick={logout}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-ink-400 transition hover:bg-ink-100 hover:text-ink-700"
+                title="Sign out"
+                aria-label="Sign out"
+              >
+                <LogOut className="h-4 w-4" />
+              </button>
             </div>
-            <ShieldCheck
-              className={`hidden h-4 w-4 sm:block ${user.role === "manager" ? "text-purple-600" : "text-mint-600"}`}
-              aria-label="Authorised user"
-            />
-          </button>
+          )}
         </div>
       </div>
     </header>

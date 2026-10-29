@@ -8,9 +8,18 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import {
+  auth,
+  testFirestoreConnection,
+  onAuthStateChanged,
+  loadCrossDeviceProfileFromFirestore,
+  syncAccountToFirestore,
+  signInWithGoogleCrossDevice,
+  signOutFromFirebase,
+} from "@/lib/firebase-client";
 
 export type AppUserRole = "manager" | "content_creator";
-export type SecurityRole = "ADMIN" | "REVIEWER" | "CREATOR";
+export type SecurityRole = "SUPER_ADMIN" | "ADMIN" | "REVIEWER" | "CREATOR";
 
 export interface UserAccount {
   id: string;
@@ -30,135 +39,35 @@ export interface UserAccount {
   token?: string;
 }
 
-export type PresetUserKey =
-  | "vedant_admin"
-  | "ecofresh_admin"
-  | "ecofresh_reviewer"
-  | "ecofresh_creator"
-  | "manya"
-  | "arjun"
-  | "priya";
-
-export const PRESET_USERS: Record<PresetUserKey, UserAccount> = {
-  vedant_admin: {
-    id: "u0000000-admin-vedant",
-    username: "VedantBhagat",
-    name: "Vedant Bhagat",
-    email: "VedantBhagat@admin.in",
-    role: "manager",
-    securityRole: "ADMIN",
-    roleLabel: "Super Admin (ADMIN)",
-    department: "Executive Governance & Security",
-    brand_id: "b0000001-0000-4000-8000-000000000001",
-    brand_name: "EcoFresh Botanicals",
-    isApproved: true,
-    lobbyAccess: true,
-    status: "approved",
-    initials: "VB",
-  },
-  ecofresh_admin: {
-    id: "u0000001-0000-4000-8000-000000000001",
-    username: "admin",
-    name: "Elena Rostova",
-    email: "admin@ecofresh.com",
-    role: "manager",
-    securityRole: "ADMIN",
-    roleLabel: "Workspace Admin (ADMIN)",
-    department: "Governance & Security",
-    brand_id: "b0000001-0000-4000-8000-000000000001",
-    brand_name: "EcoFresh Botanicals",
-    isApproved: true,
-    lobbyAccess: true,
-    status: "approved",
-    initials: "ER",
-  },
-  ecofresh_reviewer: {
-    id: "u0000002-0000-4000-8000-000000000002",
-    username: "reviewer",
-    name: "Marcus Vance",
-    email: "reviewer@ecofresh.com",
-    role: "manager",
-    securityRole: "REVIEWER",
-    roleLabel: "Compliance Manager (REVIEWER)",
-    department: "Compliance Review",
-    brand_id: "b0000001-0000-4000-8000-000000000001",
-    brand_name: "EcoFresh Botanicals",
-    isApproved: true,
-    lobbyAccess: true,
-    status: "approved",
-    initials: "MV",
-  },
-  ecofresh_creator: {
-    id: "u0000003-0000-4000-8000-000000000003",
-    username: "creator",
-    name: "Chloe Lin",
-    email: "creator@ecofresh.com",
-    role: "content_creator",
-    securityRole: "CREATOR",
-    roleLabel: "Content Creator (PIN Verified)",
-    department: "Brand Copywriting",
-    brand_id: "b0000001-0000-4000-8000-000000000001",
-    brand_name: "EcoFresh Botanicals",
-    isApproved: true,
-    lobbyAccess: true,
-    status: "approved",
-    initials: "CL",
-  },
-  manya: {
-    id: "manager-1",
-    username: "manya",
-    name: "Manya Iyer",
-    email: "manya.iyer@aurelia.com",
-    role: "manager",
-    securityRole: "ADMIN",
-    roleLabel: "Brand Governance Manager",
-    department: "Governance & Legal",
-    brand_id: "b0000003-0000-4000-8000-000000000003",
-    brand_name: "Aurelia Skin",
-    isApproved: true,
-    lobbyAccess: true,
-    status: "approved",
-    initials: "MI",
-  },
-  arjun: {
-    id: "creator-1",
-    username: "arjun",
-    name: "Arjun Rao",
-    email: "arjun.rao@aurelia.com",
-    role: "content_creator",
-    securityRole: "CREATOR",
-    roleLabel: "Content Creator (Authorized)",
-    department: "Marketing",
-    brand_id: "b0000003-0000-4000-8000-000000000003",
-    brand_name: "Aurelia Skin",
-    isApproved: true,
-    lobbyAccess: true,
-    status: "approved",
-    initials: "AR",
-  },
-  priya: {
-    id: "creator-new",
-    username: "priya",
-    name: "Priya Sharma",
-    email: "priya.sharma@agency.com",
-    role: "content_creator",
-    securityRole: "CREATOR",
-    roleLabel: "Agency Contributor (Pending Approval)",
-    department: "Paid Social",
-    brand_id: "b0000003-0000-4000-8000-000000000003",
-    brand_name: "Aurelia Skin",
-    isApproved: false,
-    lobbyAccess: false,
-    status: "pending",
-    initials: "PS",
-  },
+const DEFAULT_GUEST_USER: UserAccount = {
+  id: "",
+  username: "",
+  name: "Workspace User",
+  email: "",
+  role: "content_creator",
+  securityRole: "CREATOR",
+  roleLabel: "Not Signed In",
+  department: "Marketing",
+  brand_id: "b0000001-0000-4000-8000-000000000001",
+  brand_name: "EcoFresh Botanicals",
+  isApproved: false,
+  lobbyAccess: false,
+  status: "pending",
+  initials: "WU",
 };
 
 interface AuthContextValue {
   user: UserAccount;
+  isAuthenticated: boolean;
+  cloudSynced: boolean;
   isManager: boolean;
   isAdmin: boolean;
-  loginAs: (key: PresetUserKey) => Promise<void>;
+  isSuperAdmin: boolean;
+  loginWithGoogleCrossDevice: (preferredRole?: SecurityRole) => Promise<{
+    ok: boolean;
+    error?: string;
+    user?: UserAccount;
+  }>;
   loginWithCredentials: (identifier: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   createAccountWithUsername: (params: {
     username: string;
@@ -168,6 +77,8 @@ interface AuthContextValue {
     role: SecurityRole;
     department: string;
     brand_id?: string;
+    brand_name?: string;
+    workspace_name?: string;
     pin_code?: string;
   }) => Promise<{ ok: boolean; error?: string; user?: UserAccount }>;
   resetPasswordInDb: (
@@ -185,6 +96,7 @@ interface AuthContextValue {
   requestOtp: (email: string) => Promise<{ ok: boolean; otp_code?: string; error?: string }>;
   verifyOtp: (email: string, code: string) => Promise<{ ok: boolean; error?: string }>;
   loginCustom: (email: string, name: string, role: AppUserRole, department: string) => void;
+  logout: () => void;
   requestAccess: () => Promise<void>;
   loginModalOpen: boolean;
   setLoginModalOpen: (open: boolean) => void;
@@ -193,33 +105,62 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const STORAGE_AUTH_KEY = "brandlens.auth.user.v4";
+const STORAGE_AUTH_KEY = "brandlens.auth.user.v6";
+const STORAGE_AUTH_ACTIVE_KEY = "brandlens.auth.authenticated.v3";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<UserAccount>(PRESET_USERS.vedant_admin);
+  const [user, setUser] = useState<UserAccount>(DEFAULT_GUEST_USER);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [cloudSynced, setCloudSynced] = useState<boolean>(false);
   const [loginModalOpen, setLoginModalOpen] = useState(false);
 
-  // Restore saved session
+  // Restore saved session only if explicitly authenticated
   useEffect(() => {
+    void testFirestoreConnection();
     try {
+      const storedAuth = localStorage.getItem(STORAGE_AUTH_ACTIVE_KEY);
       const stored = localStorage.getItem(STORAGE_AUTH_KEY);
-      if (stored) {
+      if (stored && storedAuth === "true") {
         const parsed = JSON.parse(stored);
-        if (parsed && parsed.id) setUser(parsed);
+        if (parsed && parsed.id && parsed.email) {
+          setUser(parsed);
+          setIsAuthenticated(true);
+        }
       }
     } catch {}
   }, []);
 
   const saveUser = useCallback((nextUser: UserAccount) => {
     setUser(nextUser);
+    setIsAuthenticated(true);
     try {
       localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(nextUser));
+      localStorage.setItem(STORAGE_AUTH_ACTIVE_KEY, "true");
+    } catch {}
+    if (auth.currentUser) {
+      void syncAccountToFirestore(nextUser).then((ok) => {
+        if (ok) setCloudSynced(true);
+      });
+    }
+  }, []);
+
+  const logout = useCallback(() => {
+    setUser(DEFAULT_GUEST_USER);
+    setIsAuthenticated(false);
+    setCloudSynced(false);
+    void signOutFromFirebase();
+    try {
+      localStorage.removeItem(STORAGE_AUTH_KEY);
+      localStorage.removeItem(STORAGE_AUTH_ACTIVE_KEY);
     } catch {}
   }, []);
 
   const mapBackendUserToAccount = useCallback((apiUser: any, token?: string): UserAccount => {
     const appRole: AppUserRole =
-      apiUser.role === "ADMIN" || apiUser.role === "REVIEWER" || apiUser.app_role === "manager"
+      apiUser.role === "SUPER_ADMIN" ||
+      apiUser.role === "ADMIN" ||
+      apiUser.role === "REVIEWER" ||
+      apiUser.app_role === "manager"
         ? "manager"
         : "content_creator";
     const initials = (apiUser.name || apiUser.username || apiUser.email || "U")
@@ -229,14 +170,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .toUpperCase()
       .slice(0, 2);
 
-    const roleLabel =
-      apiUser.role === "ADMIN"
-        ? "Super Admin (ADMIN)"
-        : apiUser.role === "REVIEWER"
-        ? "Compliance Manager (REVIEWER)"
-        : apiUser.is_approved
-        ? "Content Creator (Authorized)"
-        : "Agency Contributor (Pending)";
+    const isSuper = apiUser.role === "SUPER_ADMIN";
+
+    const roleLabel = isSuper
+      ? "Super Admin"
+      : apiUser.role === "ADMIN"
+      ? "Workspace Admin (ADMIN)"
+      : apiUser.role === "REVIEWER"
+      ? "Compliance Manager (REVIEWER)"
+      : apiUser.is_approved
+      ? "Content Creator (Authorized)"
+      : "Agency Contributor (Pending)";
 
     return {
       id: apiUser.id,
@@ -248,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       roleLabel,
       department: apiUser.department || "Marketing",
       brand_id: apiUser.brand_id,
-      brand_name: apiUser.brand_name || "EcoFresh Botanicals",
+      brand_name: apiUser.brand_name || "Default Workspace",
       isApproved: Boolean(apiUser.is_approved),
       lobbyAccess:
         typeof apiUser.lobby_access === "boolean"
@@ -261,6 +205,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshAccessStatus = useCallback(async () => {
+    if (!user.id) return;
     try {
       const res = await fetch(`/api/access/status?user_id=${encodeURIComponent(user.id)}`);
       if (res.ok) {
@@ -323,6 +268,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role: SecurityRole;
       department: string;
       brand_id?: string;
+      brand_name?: string;
+      workspace_name?: string;
       pin_code?: string;
     }) => {
       try {
@@ -374,20 +321,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     },
     [mapBackendUserToAccount, saveUser]
-  );
-
-  const loginAs = useCallback(
-    async (key: PresetUserKey) => {
-      const selected = PRESET_USERS[key];
-      if (!selected) return;
-      const defaultPass = key === "vedant_admin" ? "Ashu@1285" : "demo123";
-      const result = await loginWithCredentials(selected.email, defaultPass);
-      if (!result.ok) {
-        saveUser(selected);
-        setLoginModalOpen(false);
-      }
-    },
-    [loginWithCredentials, saveUser]
   );
 
   const registerWithPin = useCallback(
@@ -498,6 +431,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const requestAccess = useCallback(async () => {
+    if (!user.id) return;
     try {
       await fetch("/api/access/request", {
         method: "POST",
@@ -515,13 +449,133 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [user]);
 
+  const loginWithGoogleCrossDevice = useCallback(
+    async (preferredRole?: SecurityRole) => {
+      try {
+        const { firebaseUser, cloudProfile } = await signInWithGoogleCrossDevice();
+        const email = firebaseUser.email || "";
+        const resolvedRole: SecurityRole =
+          cloudProfile?.role || preferredRole || "CREATOR";
+
+        const syncRes = await fetch("/api/auth/cloud-sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            uid: firebaseUser.uid,
+            email,
+            username:
+              cloudProfile?.username ||
+              email.split("@")[0].replace(/[^a-zA-Z0-9_.-]/g, "_"),
+            name:
+              cloudProfile?.name ||
+              firebaseUser.displayName ||
+              email.split("@")[0],
+            role: resolvedRole,
+            department: cloudProfile?.department || "Marketing",
+            brand_id:
+              cloudProfile?.brand_id ||
+              "b0000001-0000-4000-8000-000000000001",
+            is_approved: cloudProfile?.is_approved ?? true,
+            lobby_access: cloudProfile?.lobby_access ?? true,
+          }),
+        });
+
+        const syncData = await syncRes.json();
+        const nextAccount = syncRes.ok
+          ? mapBackendUserToAccount(syncData.user, syncData.access_token)
+          : mapBackendUserToAccount({
+              id: firebaseUser.uid,
+              username:
+                cloudProfile?.username || email.split("@")[0] || "user",
+              email,
+              name:
+                cloudProfile?.name ||
+                firebaseUser.displayName ||
+                "Workspace User",
+              role: resolvedRole,
+              brand_id:
+                cloudProfile?.brand_id ||
+                "b0000001-0000-4000-8000-000000000001",
+              brand_name: cloudProfile?.brand_name || "EcoFresh Botanicals",
+              department: cloudProfile?.department || "Marketing",
+              is_approved: true,
+              lobby_access: true,
+            });
+
+        saveUser(nextAccount);
+        const synced = await syncAccountToFirestore(nextAccount);
+        setCloudSynced(synced);
+        setLoginModalOpen(false);
+        return { ok: true, user: nextAccount };
+      } catch (err: any) {
+        return {
+          ok: false,
+          error: err?.message || "Google cross-device sign-in failed",
+        };
+      }
+    },
+    [mapBackendUserToAccount, saveUser]
+  );
+
+  // Automatically restore cross-device Firestore account when Firebase Auth is active on any device
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
+      if (!fbUser || !fbUser.emailVerified) {
+        setCloudSynced(false);
+        return;
+      }
+      const cloudProfile = await loadCrossDeviceProfileFromFirestore(fbUser);
+      if (cloudProfile) {
+        try {
+          const syncRes = await fetch("/api/auth/cloud-sync", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              uid: fbUser.uid,
+              email: cloudProfile.email,
+              username: cloudProfile.username,
+              name: cloudProfile.name,
+              role: cloudProfile.role,
+              department: cloudProfile.department,
+              brand_id: cloudProfile.brand_id,
+              is_approved: cloudProfile.is_approved,
+              lobby_access: cloudProfile.lobby_access,
+            }),
+          });
+          if (syncRes.ok) {
+            const syncData = await syncRes.json();
+            const restored = mapBackendUserToAccount(
+              syncData.user,
+              syncData.access_token
+            );
+            setUser(restored);
+            setIsAuthenticated(true);
+            setCloudSynced(true);
+            try {
+              localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(restored));
+              localStorage.setItem(STORAGE_AUTH_ACTIVE_KEY, "true");
+            } catch {}
+          }
+        } catch {}
+      }
+    });
+    return () => unsubscribe();
+  }, [mapBackendUserToAccount]);
+
+  const isSuperAdmin = user.securityRole === "SUPER_ADMIN";
+  const isAdmin =
+    user.securityRole === "ADMIN" || user.securityRole === "SUPER_ADMIN";
+
   return (
     <AuthContext.Provider
       value={{
         user,
+        isAuthenticated,
+        cloudSynced,
         isManager: user.role === "manager",
-        isAdmin: user.securityRole === "ADMIN",
-        loginAs,
+        isAdmin,
+        isSuperAdmin,
+        loginWithGoogleCrossDevice,
         loginWithCredentials,
         createAccountWithUsername,
         resetPasswordInDb,
@@ -529,6 +583,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         requestOtp,
         verifyOtp,
         loginCustom,
+        logout,
         requestAccess,
         loginModalOpen,
         setLoginModalOpen,

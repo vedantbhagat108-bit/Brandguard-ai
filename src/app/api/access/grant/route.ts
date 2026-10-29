@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const callerRole = (req.headers.get('x-user-role') as UserRole) || 'manager';
     const callerSecurityRole = req.headers.get('x-security-role') || 'ADMIN';
-    const managerId = req.headers.get('x-user-id') || 'u0000000-admin-vedant';
+    const managerId = req.headers.get('x-user-id') || 'system';
     const body = await req.json();
     const { target_user_id, action, new_role, department } = body;
 
@@ -22,9 +22,9 @@ export async function POST(req: NextRequest) {
 
     // 1. Admin Role Promotion / Demotion (Admin can make other users Admin, Manager/Reviewer, or Creator)
     if (action === 'update_role') {
-      if (!new_role || !['ADMIN', 'REVIEWER', 'CREATOR'].includes(new_role)) {
+      if (!new_role || !['SUPER_ADMIN', 'ADMIN', 'REVIEWER', 'CREATOR'].includes(new_role)) {
         return NextResponse.json(
-          { error: 'Valid new_role (ADMIN | REVIEWER | CREATOR) is required.' },
+          { error: 'Valid new_role (SUPER_ADMIN | ADMIN | REVIEWER | CREATOR) is required.' },
           { status: 400 }
         );
       }

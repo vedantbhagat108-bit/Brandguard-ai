@@ -1,0 +1,287 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Security Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'ash258296@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Validation Blueprint: AdminRecord
+    function isValidAdminRecord(data, adminUid) {
+      return data.keys().hasAll(['uid', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'createdAt']) &&
+        data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 &&
+        data.uid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.uid == adminUid &&
+        data.role is string && data.role.size() <= 16 &&
+        data.role in ['ADMIN'] &&
+        data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: UserPublicProfile
+    function isValidUserPublicProfile(data, userId) {
+      return data.keys().hasAll([
+          'userId',
+          'ownerUid',
+          'username',
+          'name',
+          'role',
+          'brand_id',
+          'brand_name',
+          'department',
+          'is_approved',
+          'lobby_access',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId',
+          'ownerUid',
+          'username',
+          'name',
+          'role',
+          'brand_id',
+          'brand_name',
+          'department',
+          'is_approved',
+          'lobby_access',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.userId == userId &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        data.ownerUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid == request.auth.uid &&
+        data.username is string && data.username.size() >= 2 && data.username.size() <= 64 &&
+        data.username.matches('^[a-zA-Z0-9_.\\-]+$') &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.role is string && data.role.size() <= 16 &&
+        data.role in ['ADMIN', 'REVIEWER', 'CREATOR'] &&
+        data.brand_id is string && data.brand_id.size() >= 2 && data.brand_id.size() <= 64 &&
+        data.brand_id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.brand_name is string && data.brand_name.size() >= 2 && data.brand_name.size() <= 100 &&
+        data.department is string && data.department.size() >= 2 && data.department.size() <= 80 &&
+        data.is_approved is bool &&
+        data.lobby_access is bool &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: UserPrivatePII
+    function isValidUserPrivatePII(data, userId) {
+      return data.keys().hasAll([
+          'userId',
+          'ownerUid',
+          'email',
+          'hashed_password',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'userId',
+          'ownerUid',
+          'email',
+          'hashed_password',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.userId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.userId == userId &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        data.ownerUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid == request.auth.uid &&
+        data.email is string && data.email.size() >= 5 && data.email.size() <= 160 &&
+        data.hashed_password is string && data.hashed_password.size() >= 16 && data.hashed_password.size() <= 128 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: WorkspaceSyncDoc
+    function isValidWorkspaceSyncDoc(data, workspaceId) {
+      return data.keys().hasAll([
+          'workspaceId',
+          'ownerUid',
+          'brand_name',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'workspaceId',
+          'ownerUid',
+          'brand_name',
+          'status',
+          'createdAt',
+          'updatedAt'
+        ]) &&
+        data.workspaceId is string && data.workspaceId.size() >= 2 && data.workspaceId.size() <= 128 &&
+        data.workspaceId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.workspaceId == workspaceId &&
+        data.ownerUid is string && data.ownerUid.size() >= 1 && data.ownerUid.size() <= 128 &&
+        data.ownerUid.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.ownerUid == request.auth.uid &&
+        data.brand_name is string && data.brand_name.size() >= 2 && data.brand_name.size() <= 100 &&
+        data.status is string && data.status.size() <= 20 &&
+        data.status in ['active', 'archived'] &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    // 1. /admins/{adminUid}
+    match /admins/{adminUid} {
+      allow get: if isVerifiedUser() && isValidId(adminUid) && (
+        request.auth.uid == adminUid || isAdmin()
+      );
+      allow list: if isVerifiedUser() && resource.data.uid == request.auth.uid;
+      allow create: if isAdmin() &&
+        isValidId(adminUid) &&
+        isValidAdminRecord(incoming(), adminUid) &&
+        incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isAdmin() && isValidId(adminUid);
+    }
+
+    // 2. /users/{userId}
+    match /users/{userId} {
+      allow get: if isVerifiedUser() && isValidId(userId) && (
+        existing().ownerUid == request.auth.uid || isAdmin()
+      );
+      allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidUserPublicProfile(incoming(), userId) &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        (
+          (incoming().role == 'CREATOR' && incoming().is_approved == false && incoming().lobby_access == false) ||
+          isAdmin()
+        );
+      allow update: if isVerifiedUser() &&
+        isValidId(userId) &&
+        isValidUserPublicProfile(incoming(), userId) &&
+        incoming().userId == existing().userId &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Action 1: Owner updates profile metadata only
+          (
+            existing().ownerUid == request.auth.uid &&
+            incoming().role == existing().role &&
+            incoming().is_approved == existing().is_approved &&
+            incoming().lobby_access == existing().lobby_access &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'department', 'brand_name', 'updatedAt'])
+          ) ||
+          // Action 2: Admin updates role or access flags
+          isAdmin()
+        );
+      allow delete: if isAdmin() && isValidId(userId);
+
+      // 3. /users/{userId}/private/{docId} (Split Collection for PII)
+      match /private/{docId} {
+        allow get: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) && (
+            (
+              exists(/databases/$(database)/documents/users/$(userId)) &&
+              get(/databases/$(database)/documents/users/$(userId)).data.ownerUid == request.auth.uid &&
+              existing().ownerUid == request.auth.uid
+            ) ||
+            isAdmin()
+          );
+        allow list: if false;
+        allow create: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          isValidUserPrivatePII(incoming(), userId) &&
+          incoming().createdAt == request.time &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/users/$(userId)) &&
+          get(/databases/$(database)/documents/users/$(userId)).data.ownerUid == request.auth.uid;
+        allow update: if isVerifiedUser() &&
+          isValidId(userId) &&
+          isValidId(docId) &&
+          isValidUserPrivatePII(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          incoming().updatedAt == request.time &&
+          exists(/databases/$(database)/documents/users/$(userId)) &&
+          get(/databases/$(database)/documents/users/$(userId)).data.ownerUid == request.auth.uid && (
+            (
+              existing().ownerUid == request.auth.uid &&
+              incoming().diff(existing()).affectedKeys().hasOnly(['email', 'hashed_password', 'updatedAt'])
+            ) ||
+            isAdmin()
+          );
+        allow delete: if isAdmin() && isValidId(userId) && isValidId(docId);
+      }
+    }
+
+    // 4. /workspaces/{workspaceId}
+    match /workspaces/{workspaceId} {
+      allow get: if isVerifiedUser() && isValidId(workspaceId) && (
+        existing().ownerUid == request.auth.uid || isAdmin()
+      );
+      allow list: if isVerifiedUser() && resource.data.ownerUid == request.auth.uid;
+      allow create: if isVerifiedUser() &&
+        isValidId(workspaceId) &&
+        isValidWorkspaceSyncDoc(incoming(), workspaceId) &&
+        incoming().status == 'active' &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time;
+      allow update: if isVerifiedUser() &&
+        isValidId(workspaceId) &&
+        isValidWorkspaceSyncDoc(incoming(), workspaceId) &&
+        incoming().workspaceId == existing().workspaceId &&
+        incoming().ownerUid == existing().ownerUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time && (
+          // Terminal State Lock: once status == 'archived', only admin can modify
+          (
+            existing().status != 'archived' &&
+            existing().ownerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['brand_name', 'status', 'updatedAt'])
+          ) ||
+          isAdmin()
+        );
+      allow delete: if isAdmin() && isValidId(workspaceId);
+    }
+  }
+}

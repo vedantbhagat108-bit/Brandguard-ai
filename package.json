@@ -24,6 +24,7 @@
     "unpdf": "^1.9.1"
   },
   "devDependencies": {
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
     "@types/node": "^26.6.5",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",

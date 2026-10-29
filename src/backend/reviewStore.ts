@@ -1,16 +1,23 @@
+import fs from 'fs';
+import path from 'path';
 import { computeScore, DEMO_USER } from '@/lib/review-config';
-import { createSeedReviews } from '@/lib/mock/seed-reviews';
 import type {
-  ActivityEvent,
-  Finding,
   FindingAction,
-  KnowledgeGap,
   Review,
   ReviewComment,
-  ReviewSubmission,
   ReviewVersion,
-  Severity,
 } from '@/lib/types';
+import { securityDB, SubmissionRecord } from './database.ts';
+
+const LEGACY_DEMO_REVIEW_IDS = new Set([
+  'rev_ecofresh_miracle',
+  'rev_ecofresh_spring',
+  'rev_glow_launch',
+  'rev_autumn_ritual',
+  'rev_winter_glow',
+  'rev_barrier_repair',
+  'rev_spf_mist',
+]);
 
 function newId(prefix: string) {
   const rand =
@@ -88,204 +95,110 @@ function sanitizeReviewState(review: Review): Review {
   return review;
 }
 
-import { securityDB } from './database.ts';
-
 class BackendReviewStore {
   private reviews: Map<string, Review> = new Map();
   private initialized = false;
 
-  private seedEcoFreshReviews(): Review[] {
-    const now = new Date().toISOString();
-    const miracleContent =
-      'Our new herbal drops are a 100% guarantee cure for slow metabolism and will eliminate all digestive fatigue within 24 hours!';
-    const springContent =
-      'Embrace nature this spring with our cold-pressed herbal wellness infusion. Formulated with organic chamomile and peppermint to support your mindful daily routine. These statements have not been evaluated by the FDA. This product is not intended to diagnose, treat, cure, or prevent any disease.';
+  private getStorageFilePath(): string {
+    try {
+      const localDir = path.join(process.cwd(), '.data');
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+      }
+      return path.join(localDir, 'reviews-db.json');
+    } catch {
+      return '/tmp/brandlens-reviews-db.json';
+    }
+  }
 
-    return [
-      {
-        id: 'rev_ecofresh_miracle',
-        title: 'EcoFresh — Miracle Metabolism Drops',
-        channel: 'Product page',
-        status: 'changes_requested',
-        content: miracleContent,
-        submittedBy: 'creator@ecofresh.com',
-        submittedRole: 'Content Creator',
-        submittedAt: now,
-        updatedAt: now,
-        assignedTo: 'reviewer@ecofresh.com',
-        dueAt: new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-        isPaidPartnership: false,
-        score: 24,
-        summary:
-          '2 open findings across Claims, Disclosure. 1 critical finding remains before approval. Severe policy violations: prohibited cure claims and missing FDA disclaimer.',
-        findings: [
-          {
-            id: 'find_eco_1',
-            ruleId: 'g0000001-0000-4000-8000-000000000001',
-            ruleCode: 'ECO-LEGAL-01',
-            title: 'Unsupported & Prohibited Medical Cure Claim',
-            category: 'Claims',
-            severity: 'critical',
-            status: 'open',
-            evidence: '100% guarantee cure for slow metabolism',
-            start: miracleContent.indexOf('100% guarantee cure for slow metabolism'),
-            end:
-              miracleContent.indexOf('100% guarantee cure for slow metabolism') +
-              '100% guarantee cure for slow metabolism'.length,
-            explanation:
-              'Prohibited medical cure claim violating FDA compliance and brand marketing rules.',
-            suggestedFix: 'supports healthy natural digestive wellness',
-            confidence: 0.98,
-            source: {
-              sourceId: 'g0000001-0000-4000-8000-000000000001',
-              title: 'Therapeutic & Medical Claims Prohibition',
-              section: 'legal_marketing_policy',
-              quote:
-                "EcoFresh products are natural dietary wellness supplements. Marketing content must NEVER claim that our products 'cure', 'treat', 'prevent', or offer a '100% guarantee' for any medical disease or physiological condition.",
-              version: '1.0',
-              approvedBy: 'admin@ecofresh.com',
-              updatedAt: now,
-            },
-          },
-          {
-            id: 'find_eco_2',
-            ruleId: 'g0000002-0000-4000-8000-000000000002',
-            ruleCode: 'ECO-DISC-02',
-            title: 'Missing Mandatory FDA Dietary Disclaimer',
-            category: 'Disclosure',
-            severity: 'high',
-            status: 'open',
-            evidence: 'eliminate all digestive fatigue within 24 hours!',
-            start: miracleContent.indexOf('eliminate all digestive fatigue within 24 hours!'),
-            end: miracleContent.length,
-            explanation: 'Metabolism and digestive claims require the mandatory FDA disclaimer.',
-            suggestedFix:
-              'supports daily comfort. These statements have not been evaluated by the FDA. This product is not intended to diagnose, treat, cure, or prevent any disease.',
-            confidence: 0.95,
-            source: {
-              sourceId: 'g0000002-0000-4000-8000-000000000002',
-              title: 'Metabolism & Dietary FDA Disclaimer',
-              section: 'disclaimers',
-              quote:
-                "Any promotional copy referencing metabolism, weight, or digestive health must include: 'These statements have not been evaluated by the FDA. This product is not intended to diagnose, treat, cure, or prevent any disease.'",
-              version: '1.0',
-              approvedBy: 'admin@ecofresh.com',
-              updatedAt: now,
-            },
-          },
-        ],
-        knowledgeGaps: [],
-        versions: [
-          {
-            id: 'ver_eco_1',
-            number: 1,
-            content: miracleContent,
-            createdAt: now,
-            author: 'creator@ecofresh.com',
-            note: 'Initial submission from EcoFresh Botanicals workspace.',
-            source: 'submission',
-            openFindings: 2,
-          },
-        ],
-        comments: [
-          {
-            id: 'comm_eco_1',
-            author: 'reviewer@ecofresh.com',
-            role: 'Reviewer',
-            body: 'Severe policy violations: prohibited cure claims and missing FDA disclaimer.',
-            createdAt: now,
-            type: 'decision',
-          },
-        ],
-        activity: [
-          {
-            id: 'act_eco_2',
-            type: 'decision',
-            message: 'Requested changes due to prohibited medical claim & missing FDA disclaimer.',
-            actor: 'reviewer@ecofresh.com',
-            at: now,
-          },
-          {
-            id: 'act_eco_1',
-            type: 'submitted',
-            message: 'Submitted Miracle Metabolism Drops for EcoFresh governance review.',
-            actor: 'creator@ecofresh.com',
-            at: now,
-          },
-        ],
-      },
-      {
-        id: 'rev_ecofresh_spring',
-        title: 'EcoFresh — Spring Botanical Renewal',
-        channel: 'Blog',
-        status: 'approved',
-        content: springContent,
-        submittedBy: 'creator@ecofresh.com',
-        submittedRole: 'Content Creator',
-        submittedAt: now,
-        updatedAt: now,
-        assignedTo: 'reviewer@ecofresh.com',
-        isPaidPartnership: false,
-        score: 96,
-        summary:
-          'No open findings remain for this version. Fully compliant with brand tone and legal disclaimer requirements.',
-        findings: [],
-        knowledgeGaps: [],
-        versions: [
-          {
-            id: 'ver_eco_spring_1',
-            number: 1,
-            content: springContent,
-            createdAt: now,
-            author: 'creator@ecofresh.com',
-            note: 'Initial submission.',
-            source: 'submission',
-            openFindings: 0,
-          },
-        ],
-        comments: [],
-        activity: [
-          {
-            id: 'act_eco_spring_2',
-            type: 'decision',
-            message: 'Approved for publication (Score: 96/100).',
-            actor: 'reviewer@ecofresh.com',
-            at: now,
-          },
-          {
-            id: 'act_eco_spring_1',
-            type: 'submitted',
-            message: 'Submitted Spring Botanical Renewal for review.',
-            actor: 'creator@ecofresh.com',
-            at: now,
-          },
-        ],
-        decision: {
-          action: 'approved',
-          by: 'reviewer@ecofresh.com',
-          at: now,
-          note: 'Fully compliant with brand tone and legal disclaimer requirements.',
-        },
-      },
-    ];
+  private loadFromDisk() {
+    try {
+      const filePath = this.getStorageFilePath();
+      if (!fs.existsSync(filePath)) return;
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.reviews)) {
+        for (const [id, rev] of parsed.reviews) {
+          if (id && rev && rev.title && !LEGACY_DEMO_REVIEW_IDS.has(id)) {
+            this.reviews.set(id, rev as Review);
+          }
+        }
+      }
+    } catch {
+      // Ignore missing or unreadable disk file
+    }
+  }
+
+  public saveToDisk() {
+    try {
+      const filePath = this.getStorageFilePath();
+      const payload = {
+        reviews: Array.from(this.reviews.entries()),
+        updatedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    } catch {
+      // Safe fallback in read-only environments
+    }
+  }
+
+  private syncToSecurityDB(review: Review) {
+    const mappedStatus: SubmissionRecord['status'] =
+      review.status === 'approved'
+        ? 'APPROVED'
+        : review.status === 'rejected'
+        ? 'REJECTED'
+        : review.status === 'changes_requested'
+        ? 'CHANGES_REQUESTED'
+        : 'PENDING_REVIEW';
+
+    const submissionRecord: SubmissionRecord = {
+      id: review.id,
+      brand_id: 'b0000001-0000-4000-8000-000000000001',
+      creator_id: review.submittedBy || 'creator',
+      campaign_name: review.title,
+      raw_content: review.content,
+      status: mappedStatus,
+      advisory_score: review.score,
+      reviewer_comments: review.decision?.note || review.comments?.[review.comments.length - 1]?.body || null,
+      created_at: review.submittedAt || new Date().toISOString(),
+      findings: (review.findings || []).map((f) => ({
+        id: f.id,
+        submission_id: review.id,
+        issue_type:
+          f.category === 'Claims'
+            ? 'UNSUPPORTED_CLAIM'
+            : f.category === 'Terminology'
+            ? 'MESSAGING_CLAIM'
+            : 'TONE_LANGUAGE',
+        severity: f.severity.toUpperCase() as any,
+        flagged_text: f.evidence,
+        source_id: f.source?.sourceId || f.ruleId,
+        source_evidence: f.source?.quote || '',
+        explanation: f.explanation,
+        suggested_edit: f.suggestedFix,
+      })),
+    };
+
+    securityDB.submissions.set(review.id, submissionRecord);
+    securityDB.saveToDisk();
   }
 
   private init() {
-    if (this.initialized) return;
-    this.initialized = true;
-    const ecoReviews = this.seedEcoFreshReviews();
-    for (const r of ecoReviews) {
-      this.reviews.set(r.id, r);
+    if (!this.initialized) {
+      this.loadFromDisk();
+      this.initialized = true;
     }
-    const seed = createSeedReviews();
-    for (const r of seed) {
-      this.reviews.set(r.id, r);
+    for (const demoId of LEGACY_DEMO_REVIEW_IDS) {
+      this.reviews.delete(demoId);
     }
   }
 
   list(): Review[] {
     this.init();
+    this.loadFromDisk();
     return Array.from(this.reviews.values())
+      .filter((r) => !LEGACY_DEMO_REVIEW_IDS.has(r.id))
       .map((r) => clone(sanitizeReviewState(r)))
       .sort(
         (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
@@ -294,6 +207,9 @@ class BackendReviewStore {
 
   get(id: string): Review | null {
     this.init();
+    if (!this.reviews.has(id)) {
+      this.loadFromDisk();
+    }
     const r = this.reviews.get(id);
     return r ? clone(sanitizeReviewState(r)) : null;
   }
@@ -303,6 +219,8 @@ class BackendReviewStore {
     sanitizeReviewState(review);
     review.updatedAt = new Date().toISOString();
     this.reviews.set(review.id, clone(review));
+    this.saveToDisk();
+    this.syncToSecurityDB(review);
     securityDB.logAudit({
       brand_id: 'b0000001-0000-4000-8000-000000000001',
       user_id: null,
@@ -605,7 +523,7 @@ class BackendReviewStore {
     let nextContent = review.content;
     let applied = 0;
     const now = new Date().toISOString();
-    const author = review.submittedBy || 'Arjun Rao';
+    const author = review.submittedBy || 'Creator';
 
     for (const finding of open) {
       const found = nearestOccurrence(nextContent, finding.evidence, finding.start);
@@ -618,7 +536,7 @@ class BackendReviewStore {
         action: 'edited',
         by: author,
         at: now,
-        note: 'Applied in a simulated creator revision (demo helper).',
+        note: 'Applied suggested fixes in creator revision.',
       };
       applied += 1;
     }
@@ -637,7 +555,7 @@ class BackendReviewStore {
       content: nextContent,
       createdAt: now,
       author,
-      note: 'Simulated creator revision: applied all suggested fixes. (Demo helper — no creator portal is connected.)',
+      note: 'Creator revision: applied suggested fixes.',
       source: 'creator_revision',
       openFindings: openAfter,
     });
@@ -658,7 +576,7 @@ class BackendReviewStore {
     review.activity.unshift({
       id: newId('act'),
       type: 'version',
-      message: `Creator revision uploaded with ${applied} suggested ${applied === 1 ? 'fix' : 'fixes'} applied (simulated).`,
+      message: `Creator revision uploaded with ${applied} suggested ${applied === 1 ? 'fix' : 'fixes'} applied.`,
       actor: author,
       at: now,
     });
@@ -668,14 +586,9 @@ class BackendReviewStore {
 
   reset(): Review[] {
     this.reviews.clear();
-    const ecoReviews = this.seedEcoFreshReviews();
-    for (const r of ecoReviews) {
-      this.reviews.set(r.id, r);
-    }
-    const seed = createSeedReviews();
-    for (const r of seed) {
-      this.reviews.set(r.id, r);
-    }
+    securityDB.submissions.clear();
+    this.saveToDisk();
+    securityDB.saveToDisk();
     return this.list();
   }
 }

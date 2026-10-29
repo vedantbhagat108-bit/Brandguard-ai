@@ -6,6 +6,7 @@ import {
   hashPassword,
   DBUserRecord,
 } from '@/backend/database.ts';
+import { pinIpLimiter, RateLimitError } from '@/backend/rateLimiter.ts';
 
 export const runtime = 'nodejs';
 
@@ -30,6 +31,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'verify') {
+      pinIpLimiter.checkRateLimit(req);
+
       if (!otpValue) {
         return NextResponse.json({ detail: 'OTP code is required.' }, { status: 400 });
       }
@@ -46,6 +49,7 @@ export async function POST(req: NextRequest) {
           hashed_password: hashPassword('otp-verified'),
           role: role === 'manager' || role === 'admin' ? 'ADMIN' : 'CREATOR',
           brand_id: defaultBrandId,
+          brand_name: 'Default Workspace',
           name: cleanEmail.split('@')[0],
           department: 'Marketing',
           is_approved: true,
@@ -53,6 +57,7 @@ export async function POST(req: NextRequest) {
           created_at: new Date().toISOString(),
         };
         securityDB.users.set(newDbUser.id, newDbUser);
+        securityDB.saveToDisk();
         dbUser = newDbUser;
       }
 
@@ -85,7 +90,7 @@ export async function POST(req: NextRequest) {
           name: dbUser.name,
           role: dbUser.role,
           brand_id: dbUser.brand_id,
-          brand_name: workspace?.name || 'EcoFresh Botanicals',
+          brand_name: dbUser.brand_name || workspace?.name || 'Default Workspace',
           department: dbUser.department,
           is_approved: dbUser.is_approved,
           lobby_access: typeof dbUser.lobby_access === 'boolean' ? dbUser.lobby_access : true,
@@ -95,6 +100,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ detail: 'Invalid action' }, { status: 400 });
   } catch (err: any) {
+    if (err instanceof RateLimitError) {
+      return NextResponse.json(
+        { detail: err.message },
+        { status: 429, headers: err.headers }
+      );
+    }
     return NextResponse.json(
       { detail: err.message || 'OTP operation failed' },
       { status: 400 }

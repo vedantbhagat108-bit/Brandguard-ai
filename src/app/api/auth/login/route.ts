@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
         name: user.name,
         role: user.role,
         brand_id: user.brand_id,
-        brand_name: workspace?.name || 'EcoFresh Botanicals',
+        brand_name: user.brand_name || workspace?.name || 'Default Workspace',
         department: user.department,
         is_approved: user.is_approved,
         lobby_access: typeof user.lobby_access === 'boolean' ? user.lobby_access : true,

@@ -8,6 +8,7 @@ import {
   DBUserRecord,
 } from '@/backend/database.ts';
 import { requestDatabaseAccess, updateAccessGrant } from '@/backend/accessControl.ts';
+import { pinIpLimiter, RateLimitError } from '@/backend/rateLimiter.ts';
 
 export const runtime = 'nodejs';
 
@@ -20,6 +21,8 @@ export async function POST(req: NextRequest) {
       password,
       name,
       brand_id = 'b0000001-0000-4000-8000-000000000001',
+      brand_name,
+      workspace_name,
       role = 'CREATOR',
       pin_code,
       require_pin = false,
@@ -43,7 +46,7 @@ export async function POST(req: NextRequest) {
       .toLowerCase();
 
     const normalizedEmail = (
-      email || `${cleanUsername}@ecofresh.com`
+      email || `${cleanUsername}@workspace.local`
     )
       .trim()
       .toLowerCase();
@@ -69,13 +72,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    let workspace =
-      securityDB.workspaces.get(brand_id) ||
-      securityDB.workspaces.get('b0000001-0000-4000-8000-000000000001')!;
+    const customWorkspaceName = (workspace_name || brand_name || '').trim();
+    let workspace = securityDB.getOrCreateWorkspaceByName(customWorkspaceName, brand_id);
 
     let pinVerified = false;
     if (pin_code && pin_code.trim()) {
       try {
+        pinIpLimiter.checkRateLimit(req);
         const burnedPin = securityDB.verifyAndBurnPin({
           pin_code: pin_code.trim(),
           user_email: normalizedEmail,
@@ -84,6 +87,12 @@ export async function POST(req: NextRequest) {
         const pinWs = securityDB.workspaces.get(burnedPin.brand_id);
         if (pinWs) workspace = pinWs;
       } catch (pinErr: any) {
+        if (pinErr instanceof RateLimitError) {
+          return NextResponse.json(
+            { detail: pinErr.message },
+            { status: 429, headers: pinErr.headers }
+          );
+        }
         return NextResponse.json(
           { detail: pinErr.message },
           { status: pinErr.status || 403 }
@@ -103,6 +112,7 @@ export async function POST(req: NextRequest) {
         .replace(/[._-]/g, ' ')
         .replace(/\b\w/g, (l: string) => l.toUpperCase());
 
+    // Disallow self-registration as SUPER_ADMIN (Super Admin is pre-provisioned as admin@gmail.com)
     const normalizedRole: DBRole = ['ADMIN', 'REVIEWER', 'CREATOR'].includes(role)
       ? (role as DBRole)
       : role === 'manager'
@@ -122,6 +132,7 @@ export async function POST(req: NextRequest) {
       hashed_password: hashPassword(password),
       role: normalizedRole,
       brand_id: workspace.id,
+      brand_name: workspace.name,
       name: displayName,
       department,
       is_approved: isApproved,
@@ -130,6 +141,7 @@ export async function POST(req: NextRequest) {
     };
 
     securityDB.users.set(newUser.id, newUser);
+    securityDB.saveToDisk();
 
     // Sync with access control registry
     requestDatabaseAccess({

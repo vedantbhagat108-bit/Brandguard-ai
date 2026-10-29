@@ -1,7 +1,9 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { store } from './store.ts';
 
-export type DBRole = 'ADMIN' | 'REVIEWER' | 'CREATOR';
+export type DBRole = 'SUPER_ADMIN' | 'ADMIN' | 'REVIEWER' | 'CREATOR';
 
 export interface BrandWorkspaceRecord {
   id: string;
@@ -31,6 +33,7 @@ export interface DBUserRecord {
   hashed_password: string;
   role: DBRole;
   brand_id: string;
+  brand_name?: string;
   name: string;
   department: string;
   is_approved: boolean;
@@ -95,13 +98,32 @@ export interface AuditLogRecord {
     | 'LOBBY_APPROVED'
     | 'ROLE_UPDATED'
     | 'LOBBY_ACCESS_UPDATED'
-    | 'GMAIL_OTP_SENT';
+    | 'GMAIL_OTP_SENT'
+    | 'VISUAL_ASSET_UPLOADED'
+    | 'VISUAL_ASSET_APPROVED'
+    | 'VISUAL_ASSET_REJECTED'
+    | 'VISUAL_ASSET_ARCHIVED'
+    | 'VISUAL_ASSET_VERSIONED'
+    | 'VISUAL_ASSET_DELETED'
+    | 'VISUAL_REVIEW_COMPLETED';
   details: Record<string, any>;
   details_text: string;
   timestamp: string;
 }
 
 const JWT_SECRET = process.env.JWT_SECRET_KEY || 'brandlens-ai-secure-secret-key-change-in-production-2026';
+
+const LEGACY_DEMO_USER_IDS = new Set([
+  'u0000000-admin-vedant',
+  'u0000001-0000-4000-8000-000000000001',
+  'u0000002-0000-4000-8000-000000000002',
+  'u0000003-0000-4000-8000-000000000003',
+  'manager-1',
+  'creator-1',
+  'creator-new',
+]);
+
+const LEGACY_DEMO_PINS = new Set(['ECO-8821', 'NOVA-4410', 'AUR-9920', 'ECO-0019']);
 
 export function hashPassword(password: string): string {
   const salt = 'brandlens_salt_2026';
@@ -174,203 +196,30 @@ export class MultiTenantSecurityDB {
   public auditLogs: AuditLogRecord[] = [];
 
   constructor() {
-    this.seedDemoData();
+    this.seedWorkspacesAndGuidelines();
   }
 
-  public seedDemoData() {
+  public seedWorkspacesAndGuidelines() {
     if (this.workspaces.size > 0) return;
 
     const now = new Date().toISOString();
-    const expiry7d = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
 
-    // 1. Brand Workspaces (matching seed_data.py + Aurelia Skin)
+    const brandGlobal: BrandWorkspaceRecord = {
+      id: 'b0000000-0000-4000-8000-000000000000',
+      name: 'Global Governance',
+      brand_name: 'Global Governance',
+      created_at: now,
+    };
     const brandEco: BrandWorkspaceRecord = {
       id: 'b0000001-0000-4000-8000-000000000001',
-      name: 'EcoFresh Botanicals',
-      brand_name: 'EcoFresh Botanicals',
-      created_at: now,
-    };
-    const brandNova: BrandWorkspaceRecord = {
-      id: 'b0000002-0000-4000-8000-000000000002',
-      name: 'NovaTech Cloud',
-      brand_name: 'NovaTech Cloud',
-      created_at: now,
-    };
-    const brandAurelia: BrandWorkspaceRecord = {
-      id: 'b0000003-0000-4000-8000-000000000003',
-      name: 'Aurelia Skin',
-      brand_name: 'Aurelia Skin',
+      name: 'Default Workspace',
+      brand_name: 'Default Workspace',
       created_at: now,
     };
 
+    this.workspaces.set(brandGlobal.id, brandGlobal);
     this.workspaces.set(brandEco.id, brandEco);
-    this.workspaces.set(brandNova.id, brandNova);
-    this.workspaces.set(brandAurelia.id, brandAurelia);
-    this.workspaces.set('ws_ecofresh', brandEco);
-    this.workspaces.set('ws_novatech', brandNova);
-    this.workspaces.set('ws_aurelia', brandAurelia);
 
-    // 2. Brand PINs (Single-Use Burnable OTPs from seed_data.py)
-    const pinsList: BrandPinRecord[] = [
-      {
-        id: crypto.randomUUID(),
-        brand_id: brandEco.id,
-        brand_name: brandEco.name,
-        pin_code: 'ECO-8821',
-        created_by_id: 'u0000000-admin-vedant',
-        created_by_email: 'VedantBhagat@admin.in',
-        created_at: now,
-        expires_at: expiry7d,
-        is_used: false,
-        used_by_email: null,
-        used_at: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        brand_id: brandNova.id,
-        brand_name: brandNova.name,
-        pin_code: 'NOVA-4410',
-        created_by_id: 'u0000000-admin-vedant',
-        created_by_email: 'VedantBhagat@admin.in',
-        created_at: now,
-        expires_at: expiry7d,
-        is_used: false,
-        used_by_email: null,
-        used_at: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        brand_id: brandAurelia.id,
-        brand_name: brandAurelia.name,
-        pin_code: 'AUR-9920',
-        created_by_id: 'u0000000-admin-vedant',
-        created_by_email: 'VedantBhagat@admin.in',
-        created_at: now,
-        expires_at: expiry7d,
-        is_used: false,
-        used_by_email: null,
-        used_at: null,
-      },
-      {
-        id: crypto.randomUUID(),
-        brand_id: brandEco.id,
-        brand_name: brandEco.name,
-        pin_code: 'ECO-0019',
-        created_by_id: 'u0000000-admin-vedant',
-        created_by_email: 'VedantBhagat@admin.in',
-        created_at: now,
-        expires_at: expiry7d,
-        is_used: true,
-        used_by_email: 'creator@ecofresh.com',
-        used_at: now,
-      },
-    ];
-    for (const p of pinsList) {
-      this.pins.set(p.pin_code, p);
-    }
-
-    // 3. Seeded Users (including Primary Admin: VedantBhagat@admin.in / Ashu@1285)
-    const demoHashed = hashPassword('demo123');
-    const vedantHashed = hashPassword('Ashu@1285');
-
-    const usersList: DBUserRecord[] = [
-      {
-        id: 'u0000000-admin-vedant',
-        username: 'VedantBhagat',
-        email: 'VedantBhagat@admin.in',
-        hashed_password: vedantHashed,
-        role: 'ADMIN',
-        brand_id: brandEco.id,
-        name: 'Vedant Bhagat',
-        department: 'Executive Governance & Security',
-        is_approved: true,
-        lobby_access: true,
-        created_at: now,
-      },
-      {
-        id: 'u0000001-0000-4000-8000-000000000001',
-        username: 'admin',
-        email: 'admin@ecofresh.com',
-        hashed_password: demoHashed,
-        role: 'ADMIN',
-        brand_id: brandEco.id,
-        name: 'Elena Rostova',
-        department: 'Governance & Security',
-        is_approved: true,
-        lobby_access: true,
-        created_at: now,
-      },
-      {
-        id: 'u0000002-0000-4000-8000-000000000002',
-        username: 'reviewer',
-        email: 'reviewer@ecofresh.com',
-        hashed_password: demoHashed,
-        role: 'REVIEWER',
-        brand_id: brandEco.id,
-        name: 'Marcus Vance',
-        department: 'Compliance Review',
-        is_approved: true,
-        lobby_access: true,
-        created_at: now,
-      },
-      {
-        id: 'u0000003-0000-4000-8000-000000000003',
-        username: 'creator',
-        email: 'creator@ecofresh.com',
-        hashed_password: demoHashed,
-        role: 'CREATOR',
-        brand_id: brandEco.id,
-        name: 'Chloe Lin',
-        department: 'Brand Copywriting',
-        is_approved: true,
-        lobby_access: true,
-        created_at: now,
-      },
-      {
-        id: 'manager-1',
-        username: 'manya',
-        email: 'manya.iyer@aurelia.com',
-        hashed_password: demoHashed,
-        role: 'ADMIN',
-        brand_id: brandAurelia.id,
-        name: 'Manya Iyer',
-        department: 'Governance & Legal',
-        is_approved: true,
-        lobby_access: true,
-        created_at: now,
-      },
-      {
-        id: 'creator-1',
-        username: 'arjun',
-        email: 'arjun.rao@aurelia.com',
-        hashed_password: demoHashed,
-        role: 'CREATOR',
-        brand_id: brandAurelia.id,
-        name: 'Arjun Rao',
-        department: 'Marketing',
-        is_approved: true,
-        lobby_access: true,
-        created_at: now,
-      },
-      {
-        id: 'creator-new',
-        username: 'priya',
-        email: 'priya.sharma@agency.com',
-        hashed_password: demoHashed,
-        role: 'CREATOR',
-        brand_id: brandAurelia.id,
-        name: 'Priya Sharma',
-        department: 'Paid Social',
-        is_approved: false,
-        lobby_access: false,
-        created_at: now,
-      },
-    ];
-    for (const u of usersList) {
-      this.users.set(u.id, u);
-    }
-
-    // 4. Brand Guidelines (EcoFresh Botanicals from seed_data.py)
     const gLegal: BrandGuidelineRecord = {
       id: 'g0000001-0000-4000-8000-000000000001',
       brand_id: brandEco.id,
@@ -432,75 +281,86 @@ export class MultiTenantSecurityDB {
       'marketing',
       'internal'
     );
-
-    // 5. Seed Audit Logs
-    this.logAudit({
-      brand_id: brandEco.id,
-      user_id: 'u0000000-admin-vedant',
-      user_email: 'VedantBhagat@admin.in',
-      action: 'USER_LOGIN',
-      details: { username: 'VedantBhagat', email: 'VedantBhagat@admin.in', role: 'ADMIN', status: 'Primary Super Admin Provisioned' },
-    });
-    this.logAudit({
-      brand_id: brandEco.id,
-      user_id: usersList[1].id,
-      user_email: 'admin@ecofresh.com',
-      action: 'PIN_GENERATED',
-      details: { pin_code: 'ECO-8821', brand: 'EcoFresh Botanicals', generated_by: 'admin@ecofresh.com' },
-    });
-    this.logAudit({
-      brand_id: brandEco.id,
-      user_id: usersList[3].id,
-      user_email: 'creator@ecofresh.com',
-      action: 'PIN_BURNED',
-      details: {
-        pin_code: 'ECO-0019',
-        used_by_email: 'creator@ecofresh.com',
-        brand: 'EcoFresh Botanicals',
-      },
-    });
   }
 
-  public ensurePrimaryAdmin() {
-    // Backfill lobby_access for any existing users in hot-reloaded singleton
+  public purgeLegacyDemoRecords() {
+    for (const demoId of LEGACY_DEMO_USER_IDS) {
+      this.users.delete(demoId);
+    }
+    for (const demoPin of LEGACY_DEMO_PINS) {
+      this.pins.delete(demoPin);
+    }
     for (const u of this.users.values()) {
       if (typeof u.lobby_access !== 'boolean') {
-        u.lobby_access = u.role === 'ADMIN' || u.role === 'REVIEWER' || Boolean(u.is_approved);
+        u.lobby_access =
+          u.role === 'SUPER_ADMIN' ||
+          u.role === 'ADMIN' ||
+          u.role === 'REVIEWER' ||
+          Boolean(u.is_approved);
       }
     }
+    this.ensureSuperAdminAccount();
+  }
 
-    // Backfill created_by_id and created_by_email on any existing pins
-    for (const p of this.pins.values()) {
-      if (!p.created_by_email) {
-        p.created_by_id = 'u0000000-admin-vedant';
-        p.created_by_email = 'VedantBhagat@admin.in';
+  public ensureSuperAdminAccount() {
+    const superAdminId = 'u0000000-super-admin';
+    const superAdminEmail = 'admin@gmail.com';
+    const existing =
+      this.users.get(superAdminId) ||
+      this.findUserByEmail(superAdminEmail);
+
+    const now = new Date().toISOString();
+    const superAdminRecord: DBUserRecord = {
+      id: existing?.id || superAdminId,
+      username: 'admin@gmail.com',
+      email: superAdminEmail,
+      hashed_password: existing?.password_updated_at
+        ? existing.hashed_password
+        : hashPassword('Ashu@12'),
+      role: 'SUPER_ADMIN',
+      brand_id: 'b0000000-0000-4000-8000-000000000000',
+      brand_name: 'Global Governance',
+      name: existing?.name || 'Super Admin',
+      department: existing?.department || 'Platform Governance',
+      is_approved: true,
+      lobby_access: true,
+      created_at: existing?.created_at || now,
+      password_updated_at: existing?.password_updated_at,
+    };
+    this.users.set(superAdminRecord.id, superAdminRecord);
+  }
+
+  public getOrCreateWorkspaceByName(
+    workspaceName?: string,
+    brandId?: string
+  ): BrandWorkspaceRecord {
+    const cleanName = (workspaceName || '').trim();
+    if (cleanName) {
+      for (const ws of this.workspaces.values()) {
+        if (ws.name.toLowerCase() === cleanName.toLowerCase()) {
+          return ws;
+        }
       }
-    }
-
-    const existingVedant = this.findUserByUsernameOrEmail('VedantBhagat@admin.in');
-    if (!existingVedant) {
       const now = new Date().toISOString();
-      const vedantUser: DBUserRecord = {
-        id: 'u0000000-admin-vedant',
-        username: 'VedantBhagat',
-        email: 'VedantBhagat@admin.in',
-        hashed_password: hashPassword('Ashu@1285'),
-        role: 'ADMIN',
-        brand_id: 'b0000001-0000-4000-8000-000000000001',
-        name: 'Vedant Bhagat',
-        department: 'Executive Governance & Security',
-        is_approved: true,
-        lobby_access: true,
+      const newWs: BrandWorkspaceRecord = {
+        id: `ws_${crypto.randomUUID()}`,
+        name: cleanName,
+        brand_name: cleanName,
         created_at: now,
       };
-      this.users.set(vedantUser.id, vedantUser);
-    } else {
-      existingVedant.role = 'ADMIN';
-      existingVedant.is_approved = true;
-      existingVedant.lobby_access = true;
-      existingVedant.hashed_password = hashPassword('Ashu@1285');
-      this.users.set(existingVedant.id, existingVedant);
+      this.workspaces.set(newWs.id, newWs);
+      this.saveToDisk();
+      return newWs;
     }
+
+    if (brandId && this.workspaces.has(brandId)) {
+      return this.workspaces.get(brandId)!;
+    }
+
+    return (
+      this.workspaces.get('b0000001-0000-4000-8000-000000000001') ||
+      Array.from(this.workspaces.values())[0]
+    );
   }
 
   public findUserByIdOrIdentifier(identifier: string): DBUserRecord | undefined {
@@ -520,7 +380,12 @@ export class MultiTenantSecurityDB {
   public findUserByUsername(username: string): DBUserRecord | undefined {
     const clean = username.trim().toLowerCase();
     for (const u of this.users.values()) {
-      if (u.username.toLowerCase() === clean) return u;
+      if (
+        u.username.toLowerCase() === clean ||
+        (u.email.toLowerCase() === 'admin@gmail.com' && clean === 'admin')
+      ) {
+        return u;
+      }
     }
     return undefined;
   }
@@ -528,7 +393,11 @@ export class MultiTenantSecurityDB {
   public findUserByUsernameOrEmail(identifier: string): DBUserRecord | undefined {
     const clean = identifier.trim().toLowerCase();
     for (const u of this.users.values()) {
-      if (u.email.toLowerCase() === clean || u.username.toLowerCase() === clean) {
+      if (
+        u.email.toLowerCase() === clean ||
+        u.username.toLowerCase() === clean ||
+        (u.email.toLowerCase() === 'admin@gmail.com' && clean === 'admin')
+      ) {
         return u;
       }
     }
@@ -542,9 +411,9 @@ export class MultiTenantSecurityDB {
     newRole: DBRole;
   }): DBUserRecord {
     const actor = this.findUserByIdOrIdentifier(params.actorId);
-    const effectiveActorRole = actor?.role || params.actorRole || 'ADMIN';
+    const effectiveActorRole = (actor?.role || params.actorRole || 'ADMIN').toUpperCase();
 
-    if (effectiveActorRole !== 'ADMIN' && effectiveActorRole !== 'admin') {
+    if (effectiveActorRole !== 'ADMIN' && effectiveActorRole !== 'SUPER_ADMIN') {
       const err: any = new Error('Forbidden: Only an Admin has the right to promote or change user roles.');
       err.status = 403;
       throw err;
@@ -559,7 +428,11 @@ export class MultiTenantSecurityDB {
 
     const previousRole = target.role;
     target.role = params.newRole;
-    if (params.newRole === 'ADMIN' || params.newRole === 'REVIEWER') {
+    if (
+      params.newRole === 'SUPER_ADMIN' ||
+      params.newRole === 'ADMIN' ||
+      params.newRole === 'REVIEWER'
+    ) {
       target.is_approved = true;
       target.lobby_access = true;
     }
@@ -568,14 +441,14 @@ export class MultiTenantSecurityDB {
     this.logAudit({
       brand_id: target.brand_id,
       user_id: actor?.id || params.actorId,
-      user_email: actor?.email || 'VedantBhagat@admin.in',
+      user_email: actor?.email || 'system',
       action: 'ROLE_UPDATED',
       details: {
         target_user: target.email,
         username: target.username,
         previous_role: previousRole,
         new_role: params.newRole,
-        updated_by: actor?.email || 'VedantBhagat@admin.in',
+        updated_by: actor?.email || 'system',
       },
     });
 
@@ -592,6 +465,7 @@ export class MultiTenantSecurityDB {
     const effectiveActorRole = (actor?.role || params.actorRole || 'ADMIN').toUpperCase();
 
     if (
+      effectiveActorRole !== 'SUPER_ADMIN' &&
       effectiveActorRole !== 'ADMIN' &&
       effectiveActorRole !== 'REVIEWER' &&
       effectiveActorRole !== 'MANAGER'
@@ -616,13 +490,13 @@ export class MultiTenantSecurityDB {
     this.logAudit({
       brand_id: target.brand_id,
       user_id: actor?.id || params.actorId,
-      user_email: actor?.email || 'VedantBhagat@admin.in',
+      user_email: actor?.email || 'system',
       action: 'LOBBY_ACCESS_UPDATED',
       details: {
         target_user: target.email,
         username: target.username,
         lobby_rights: params.lobbyAccess ? 'GRANTED' : 'REVOKED',
-        updated_by: actor?.email || 'VedantBhagat@admin.in',
+        updated_by: actor?.email || 'system',
       },
     });
 
@@ -666,7 +540,7 @@ export class MultiTenantSecurityDB {
     brandId?: string;
     prefix?: string;
   }): BrandPinRecord {
-    if (params.adminUser.role !== 'ADMIN') {
+    if (params.adminUser.role !== 'ADMIN' && params.adminUser.role !== 'SUPER_ADMIN') {
       const err: any = new Error(
         `Access denied: Operation requires ADMIN role. Current role: ${params.adminUser.role}`
       );
@@ -779,7 +653,7 @@ export class MultiTenantSecurityDB {
       entry.details?.used_by_email ||
       entry.details?.generated_by ||
       entry.details?.created_by ||
-      'system@brandlens.ai';
+      'system';
 
     const record: AuditLogRecord = {
       id: crypto.randomUUID(),
@@ -793,19 +667,103 @@ export class MultiTenantSecurityDB {
       timestamp: new Date().toISOString(),
     };
     this.auditLogs.unshift(record);
+    this.saveToDisk();
     return record;
+  }
+
+  private getStorageFilePath(): string {
+    try {
+      const localDir = path.join(process.cwd(), '.data');
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+      }
+      return path.join(localDir, 'security-db.json');
+    } catch {
+      return '/tmp/brandlens-security-db.json';
+    }
+  }
+
+  public saveToDisk(): void {
+    try {
+      const filePath = this.getStorageFilePath();
+      const payload = {
+        workspaces: Array.from(this.workspaces.entries()),
+        users: Array.from(this.users.entries()),
+        pins: Array.from(this.pins.entries()),
+        guidelines: Array.from(this.guidelines.entries()),
+        submissions: Array.from(this.submissions.entries()),
+        auditLogs: this.auditLogs.slice(0, 250),
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    } catch {
+      // Safe fallback in read-only serverless environments
+    }
+  }
+
+  public loadFromDisk(): void {
+    try {
+      const filePath = this.getStorageFilePath();
+      if (!fs.existsSync(filePath)) return;
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.workspaces)) {
+        for (const [id, ws] of parsed.workspaces) {
+          if (id && ws && ws.name) {
+            this.workspaces.set(id, ws);
+          }
+        }
+      }
+      if (Array.isArray(parsed.users)) {
+        for (const [id, u] of parsed.users) {
+          if (id && u && u.email && !LEGACY_DEMO_USER_IDS.has(id)) {
+            this.users.set(id, u);
+          }
+        }
+      }
+      if (Array.isArray(parsed.pins)) {
+        for (const [code, p] of parsed.pins) {
+          if (code && p && !LEGACY_DEMO_PINS.has(code)) {
+            this.pins.set(code, p);
+          }
+        }
+      }
+      if (Array.isArray(parsed.guidelines)) {
+        for (const [id, g] of parsed.guidelines) {
+          if (id && g && g.title) {
+            this.guidelines.set(id, g);
+          }
+        }
+      }
+      if (Array.isArray(parsed.submissions)) {
+        for (const [id, sub] of parsed.submissions) {
+          if (id && sub && sub.campaign_name) {
+            this.submissions.set(id, sub);
+          }
+        }
+      }
+      if (Array.isArray(parsed.auditLogs) && parsed.auditLogs.length > 0) {
+        this.auditLogs = parsed.auditLogs;
+      }
+    } catch {
+      // Ignore corrupted or missing file
+    }
   }
 }
 
-// Preserve singleton across Next.js hot reloads, and ensure methods/admin exist
 const globalForSecurityDB = globalThis as unknown as {
   securityDB?: MultiTenantSecurityDB;
 };
 
-if (!globalForSecurityDB.securityDB || typeof globalForSecurityDB.securityDB.updateUserRole !== 'function') {
-  globalForSecurityDB.securityDB = new MultiTenantSecurityDB();
+if (!globalForSecurityDB.securityDB || typeof globalForSecurityDB.securityDB.ensureSuperAdminAccount !== 'function') {
+  const instance = new MultiTenantSecurityDB();
+  instance.loadFromDisk();
+  instance.purgeLegacyDemoRecords();
+  instance.saveToDisk();
+  globalForSecurityDB.securityDB = instance;
 } else {
-  globalForSecurityDB.securityDB.ensurePrimaryAdmin();
+  globalForSecurityDB.securityDB.loadFromDisk();
+  globalForSecurityDB.securityDB.purgeLegacyDemoRecords();
+  globalForSecurityDB.securityDB.saveToDisk();
 }
 
 export const securityDB = globalForSecurityDB.securityDB;
