@@ -15,6 +15,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
+    securityDB.loadFromDisk();
     const body = await req.json();
     const {
       uid,
@@ -26,8 +27,6 @@ export async function POST(req: NextRequest) {
       brand_id = "b0000001-0000-4000-8000-000000000001",
       brand_name,
       workspace_name,
-      is_approved = true,
-      lobby_access = true,
     } = body;
 
     if (!email) {
@@ -61,13 +60,19 @@ export async function POST(req: NextRequest) {
       (uid ? securityDB.users.get(String(uid)) : undefined);
 
     if (existing) {
+      // Preserve authoritative role, approval, and lobby_access set by Super Admin in securityDB
       existing.name = name || existing.name;
       existing.department = department || existing.department;
-      existing.brand_id = workspace.id;
-      existing.brand_name = workspace.name;
-      existing.role = existing.email.toLowerCase() === "admin@gmail.com" ? "SUPER_ADMIN" : normalizedRole;
-      existing.is_approved = Boolean(is_approved);
-      existing.lobby_access = Boolean(lobby_access);
+      if (workspace_name || brand_name) {
+        existing.brand_id = workspace.id;
+        existing.brand_name = workspace.name;
+      }
+      if (existing.email.toLowerCase() === "admin@gmail.com") {
+        existing.role = "SUPER_ADMIN";
+      }
+      if (typeof existing.lobby_access !== "boolean") {
+        existing.lobby_access = true;
+      }
       securityDB.users.set(existing.id, existing);
       securityDB.saveToDisk();
     } else {
@@ -82,8 +87,8 @@ export async function POST(req: NextRequest) {
         brand_name: workspace.name,
         name: name || cleanUsername,
         department,
-        is_approved: Boolean(is_approved),
-        lobby_access: Boolean(lobby_access),
+        is_approved: true,
+        lobby_access: true,
         created_at: new Date().toISOString(),
       };
       securityDB.users.set(newUser.id, newUser);
@@ -95,15 +100,13 @@ export async function POST(req: NextRequest) {
         department,
         role: newUser.role === "CREATOR" ? "content_creator" : "manager",
       });
-      if (newUser.is_approved) {
-        updateAccessGrant({
-          manager_id: "firebase-cloud-sync",
-          manager_role: "admin",
-          target_user_id: newUser.id,
-          action: "approve",
-          department,
-        });
-      }
+      updateAccessGrant({
+        manager_id: "firebase-cloud-sync",
+        manager_role: "admin",
+        target_user_id: newUser.id,
+        action: "approve",
+        department,
+      });
       existing = newUser;
     }
 
@@ -115,6 +118,11 @@ export async function POST(req: NextRequest) {
       brand_id: existing.brand_id,
     });
 
+    const resolvedWorkspaceName =
+      existing.brand_name ||
+      securityDB.workspaces.get(existing.brand_id)?.name ||
+      workspace.name;
+
     return NextResponse.json({
       access_token: token,
       token_type: "bearer",
@@ -125,10 +133,14 @@ export async function POST(req: NextRequest) {
         name: existing.name,
         role: existing.role,
         brand_id: existing.brand_id,
-        brand_name: workspace.name,
+        brand_name: resolvedWorkspaceName,
         department: existing.department,
         is_approved: existing.is_approved,
-        lobby_access: existing.lobby_access,
+        lobby_access: existing.lobby_access !== false,
+        requested_role: existing.requested_role || null,
+        role_request_status: existing.role_request_status || null,
+        role_request_note: existing.role_request_note || null,
+        role_request_at: existing.role_request_at || null,
       },
     });
   } catch (err: any) {

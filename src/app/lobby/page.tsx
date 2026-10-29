@@ -23,6 +23,12 @@ import {
   Ban,
   Search,
   X,
+  ArrowUpRight,
+  Clock,
+  BookOpen,
+  Timer,
+  UserCheck,
+  UserPlus,
 } from "lucide-react";
 import type { User as FirebaseUser } from "firebase/auth";
 import {
@@ -53,8 +59,34 @@ interface LobbyNote {
   timestamp: string;
 }
 
+interface LobbyJoinRequest {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: string;
+  note?: string;
+  requested_join_code: string;
+  status: "pending" | "accepted" | "declined";
+  requested_at: string;
+  resolved_at?: string;
+}
+
 interface ReviewLobbySession {
   room_code: string;
+  admin_otp?: string | null;
+  admin_otp_created_at?: string | null;
+  admin_otp_expires_at?: number | null;
+  admin_otp_recipient?: string | null;
+  manager_join_code?: string;
+  join_requests?: LobbyJoinRequest[];
+  my_join_request?: {
+    id: string;
+    status: "pending" | "accepted" | "declined";
+    requested_at: string;
+    resolved_at?: string;
+  } | null;
+  is_joined?: boolean;
   title: string;
   created_by: string;
   created_by_email?: string;
@@ -79,6 +111,18 @@ interface DBUserSummary {
   department: string;
   is_approved: boolean;
   lobby_access?: boolean;
+  requested_role?: "ADMIN" | "REVIEWER" | "CREATOR" | null;
+  role_request_status?: "pending" | "approved" | "rejected" | null;
+  role_request_note?: string | null;
+}
+
+function formatCountdown(expiresAt: number | null | undefined, nowMs: number): string | null {
+  if (!expiresAt || typeof expiresAt !== "number") return null;
+  const diffSec = Math.floor((expiresAt - nowMs) / 1000);
+  if (diffSec <= 0) return null;
+  const mins = Math.floor(diffSec / 60);
+  const secs = diffSec % 60;
+  return `${mins}m ${String(secs).padStart(2, "0")}s`;
 }
 
 export default function CollaborativeLobbyPage() {
@@ -90,6 +134,7 @@ export default function CollaborativeLobbyPage() {
     isAdmin,
     isSuperAdmin,
     refreshAccessStatus,
+    requestRoleChange,
   } = useAuth();
   const { toast } = useToast();
 
@@ -98,18 +143,31 @@ export default function CollaborativeLobbyPage() {
   const [employees, setEmployees] = useState<DBUserSummary[]>([]);
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [roomSearchQuery, setRoomSearchQuery] = useState("");
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+
+  // Uploaded brand knowledge state
+  const [uploadedBrandDocsCount, setUploadedBrandDocsCount] = useState(0);
+  const [uploadedBrandRulesText, setUploadedBrandRulesText] = useState("");
 
   // Create Room modal/form state (for regular Admins only)
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [newRoomTitle, setNewRoomTitle] = useState("");
   const [newRoomRecipientEmail, setNewRoomRecipientEmail] = useState("");
-  const [sendGmailOnCreate, setSendGmailOnCreate] = useState(false);
-  const [newRoomGuidelines, setNewRoomGuidelines] = useState(
-    "1. Never claim products are 100% chemical-free or miraculous cures.\n2. Always cite clinical sample sizes (e.g., n=48, 8 weeks).\n3. Maintain calm, laboratory-grounded editorial tone."
-  );
-  const [newRoomDraft, setNewRoomDraft] = useState(
-    "Introducing our new Botanical Dew Serum — formulated with 2% fermented ectoin to visibly calm redness in 8 weeks (clinical study, n=52)."
-  );
+  const [sendGmailOnCreate, setSendGmailOnCreate] = useState(true);
+  const [newRoomGuidelines, setNewRoomGuidelines] = useState("");
+  const [newRoomDraft, setNewRoomDraft] = useState("");
+
+  // Standalone 15-min Admin OTP state in Create Form
+  const [previewAdminOtp, setPreviewAdminOtp] = useState<{
+    otp: string;
+    expiresAt: number;
+    recipient: string;
+  } | null>(null);
+  const [sendingPreviewOtp, setSendingPreviewOtp] = useState(false);
+
+  // Role request state for non-Super-Admin users
+  const [desiredRole, setDesiredRole] = useState<"ADMIN" | "REVIEWER" | "CREATOR">("ADMIN");
+  const [submittingRoleReq, setSubmittingRoleReq] = useState(false);
 
   // Optional Gmail OAuth for emailing room code on room creation
   const [googleUser, setGoogleUser] = useState<FirebaseUser | null>(null);
@@ -121,23 +179,57 @@ export default function CollaborativeLobbyPage() {
   const [pendingGmailConfirmation, setPendingGmailConfirmation] = useState<{
     recipients: string;
     roomCode: string;
+    adminOtp?: string | null;
+    expiresAt?: number | null;
     lobbyTitle: string;
-    otpType: "lobby_pin";
+    otpType: "lobby_pin" | "step_up_otp";
   } | null>(null);
 
   // Shared editor state
   const [draftContent, setDraftContent] = useState("");
   const [guidelinesContent, setGuidelinesContent] = useState("");
   const [noteInput, setNoteInput] = useState("");
-  const [copiedCode, setCopiedCode] = useState(false);
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [runningAudit, setRunningAudit] = useState(false);
   const [liveAuditFindings, setLiveAuditFindings] = useState<any[]>([]);
 
-  // Clear activeLobby if user switches to Super Admin (Super Admin cannot access inside any lobby) or switches user
+  // 1-second ticker for 15-minute OTP self-destruct countdown
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNowMs(Date.now());
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  // Clear activeLobby if user switches to Super Admin or switches user
   useEffect(() => {
     setActiveLobby(null);
     setCreatingRoom(false);
   }, [user.id, user.email, isSuperAdmin]);
+
+  // Default recipient email in Create Room form to Admin's own email
+  useEffect(() => {
+    if (user.email && !newRoomRecipientEmail) {
+      setNewRoomRecipientEmail(user.email);
+    }
+  }, [user.email, newRoomRecipientEmail]);
+
+  const fetchBrandKnowledge = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ingest", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        const docs = Array.isArray(data.documents) ? data.documents : [];
+        const chunks = Array.isArray(data.chunks) ? data.chunks : [];
+        setUploadedBrandDocsCount(docs.length);
+        const combinedText = chunks.map((c: any) => c.text).join("\n\n");
+        setUploadedBrandRulesText(combinedText);
+        setNewRoomGuidelines((prev) => (prev.trim() ? prev : combinedText));
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
   const fetchLobbiesAndUsers = useCallback(async () => {
     try {
@@ -148,8 +240,8 @@ export default function CollaborativeLobbyPage() {
         role: user.role || "",
       });
       const [lobbyRes, pinsRes] = await Promise.all([
-        fetch(`/api/lobby?${query.toString()}`),
-        fetch("/api/pins"),
+        fetch(`/api/lobby?${query.toString()}`, { cache: "no-store" }),
+        fetch("/api/pins", { cache: "no-store" }),
       ]);
       if (lobbyRes.ok) {
         const data = await lobbyRes.json();
@@ -170,8 +262,19 @@ export default function CollaborativeLobbyPage() {
 
   useEffect(() => {
     fetchLobbiesAndUsers();
+    fetchBrandKnowledge();
     refreshAccessStatus();
-  }, [fetchLobbiesAndUsers, refreshAccessStatus]);
+  }, [fetchLobbiesAndUsers, fetchBrandKnowledge, refreshAccessStatus]);
+
+  // Poll every 2.5 seconds so Super Admin role changes, join requests, and OTP status update ASAP
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = window.setInterval(() => {
+      fetchLobbiesAndUsers();
+      refreshAccessStatus();
+    }, 2500);
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated, fetchLobbiesAndUsers, refreshAccessStatus]);
 
   useEffect(() => {
     const unsubscribe = initAuth(
@@ -199,7 +302,7 @@ export default function CollaborativeLobbyPage() {
         setNeedsGoogleAuth(false);
         toast({
           title: "Gmail Connected",
-          description: `Connected ${result.user.email} for emailing room invites.`,
+          description: `Connected ${result.user.email} for emailing 15-minute OTPs.`,
           variant: "success",
         });
       }
@@ -214,15 +317,80 @@ export default function CollaborativeLobbyPage() {
     }
   };
 
+  // Send 15-Minute Self-Destructing OTP via Server Mail (works immediately without requiring Google OAuth)
+  const handleSendServerMailOtp = async (roomCode?: string, recipientOverride?: string) => {
+    const targetRecipient = (
+      recipientOverride ||
+      pendingGmailConfirmation?.recipients ||
+      newRoomRecipientEmail ||
+      user.email ||
+      ""
+    ).trim();
+
+    if (!targetRecipient) {
+      toast({
+        title: "Recipient Email Required",
+        description: "Enter an email address to receive the 15-minute self-destructing OTP.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setSendingPreviewOtp(true);
+    try {
+      const res = await fetch("/api/lobby", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "send_admin_otp",
+          room_code: roomCode,
+          user_id: user.id,
+          email: user.email,
+          recipient_email: targetRecipient,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.ok) {
+        if (!roomCode) {
+          setPreviewAdminOtp({
+            otp: data.otp,
+            expiresAt: data.expires_at,
+            recipient: data.recipient,
+          });
+        }
+        toast({
+          title: "15-Minute Self-Destructing OTP Sent!",
+          description: `OTP #${data.otp} emailed to ${data.recipient} (self-destructs in 15 minutes).`,
+          variant: "success",
+        });
+        if (pendingGmailConfirmation) {
+          setPendingGmailConfirmation(null);
+        }
+        await fetchLobbiesAndUsers();
+      } else {
+        toast({
+          title: "Failed to Send OTP",
+          description: data.error || "Could not generate 15-minute OTP.",
+          variant: "error",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      setSendingPreviewOtp(false);
+    }
+  };
+
   const executeConfirmedGmailSend = async () => {
     if (!pendingGmailConfirmation) return;
     const activeToken = (await getAccessToken()) || googleToken;
     if (!activeToken) {
       setNeedsGoogleAuth(true);
       toast({
-        title: "Sign in with Google Required",
-        description: "Please connect Google first to send the room code email.",
-        variant: "error",
+        title: "Sign in with Google or Use Instant Mail",
+        description:
+          "Connect Google to send via your Gmail account, or click 'Send 15-Min OTP via Mail Service'.",
+        variant: "info",
       });
       return;
     }
@@ -237,7 +405,8 @@ export default function CollaborativeLobbyPage() {
         },
         body: JSON.stringify({
           recipients: pendingGmailConfirmation.recipients,
-          roomCode: pendingGmailConfirmation.roomCode,
+          roomCode:
+            pendingGmailConfirmation.adminOtp || pendingGmailConfirmation.roomCode,
           lobbyTitle: pendingGmailConfirmation.lobbyTitle,
           senderName: user.name,
           senderEmail: googleUser?.email || user.email,
@@ -247,14 +416,14 @@ export default function CollaborativeLobbyPage() {
       const data = await res.json();
       if (res.ok && data.ok) {
         toast({
-          title: "Room Code Emailed!",
-          description: `Delivered room code to ${data.recipients.join(", ")}.`,
+          title: "15-Min Self-Destructing OTP Emailed via Gmail!",
+          description: `Delivered to ${data.recipients.join(", ")} (expires in 15 minutes).`,
           variant: "success",
         });
         setPendingGmailConfirmation(null);
       } else {
         toast({
-          title: "Failed to Send Email",
+          title: "Failed to Send via Gmail API",
           description: data.error || "Gmail API rejected the request.",
           variant: "error",
         });
@@ -267,6 +436,86 @@ export default function CollaborativeLobbyPage() {
       });
     } finally {
       setSendingGmailOtp(false);
+    }
+  };
+
+  // Creator requests the Admin for a different Lobby Joining Code
+  const handleRequestJoinLobby = async (roomCode: string, roomTitle: string) => {
+    try {
+      const res = await fetch("/api/lobby", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "request_join",
+          room_code: roomCode,
+          user_id: user.id,
+          email: user.email,
+          name: user.name,
+          role: user.role,
+          security_role: user.securityRole,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: `Requested Access to "${roomTitle}"`,
+          description:
+            data.message ||
+            "Your request has been sent to the room Admin. Once accepted, you can join via the code or open the room directly.",
+          variant: "success",
+        });
+        await fetchLobbiesAndUsers();
+      } else {
+        toast({
+          title: "Request Failed",
+          description: data.error || "Could not request access to this room.",
+          variant: "error",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "error" });
+    }
+  };
+
+  // Admin who created the lobby accepts or declines a Creator's join request
+  const handleResolveJoinRequest = async (
+    roomCode: string,
+    requestId: string,
+    approve: boolean
+  ) => {
+    try {
+      const res = await fetch("/api/lobby", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "resolve_join_request",
+          room_code: roomCode,
+          request_id: requestId,
+          user_id: user.id,
+          email: user.email,
+          approve,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: approve ? "Creator Request Accepted" : "Creator Request Declined",
+          description: data.message,
+          variant: approve ? "success" : "info",
+        });
+        if (activeLobby && activeLobby.room_code === roomCode && data.lobby) {
+          setActiveLobby(data.lobby);
+        }
+        await fetchLobbiesAndUsers();
+      } else {
+        toast({
+          title: "Action Failed",
+          description: data.error || "Could not update join request.",
+          variant: "error",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "error" });
     }
   };
 
@@ -298,6 +547,8 @@ export default function CollaborativeLobbyPage() {
           variant: grantLobby ? "success" : "info",
         });
         await fetchLobbiesAndUsers();
+        await refreshAccessStatus();
+        window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
       } else {
         toast({
           title: "Permission Error",
@@ -307,6 +558,80 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    }
+  };
+
+  const handleSuperAdminUpdateRole = async (
+    targetUserId: string,
+    newRole: "ADMIN" | "REVIEWER" | "CREATOR"
+  ) => {
+    try {
+      const res = await fetch("/api/access/grant", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Role": "manager",
+          "X-Security-Role": user.securityRole || "SUPER_ADMIN",
+          "X-User-Id": user.id,
+        },
+        body: JSON.stringify({
+          target_user_id: targetUserId,
+          action: "update_role",
+          new_role: newRole,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: `Role Updated to ${newRole === "REVIEWER" ? "MANAGER" : newRole}`,
+          description: data.message,
+          variant: "success",
+        });
+        await fetchLobbiesAndUsers();
+        await refreshAccessStatus();
+        window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
+      } else {
+        toast({
+          title: "Role Update Failed",
+          description: data.error || "Only Super Admin can change user roles.",
+          variant: "error",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "error" });
+    }
+  };
+
+  const handleRequestRoleFromLobby = async () => {
+    if (desiredRole === user.securityRole) {
+      toast({
+        title: "Already Assigned",
+        description: `Your account already holds the ${
+          desiredRole === "REVIEWER" ? "Manager" : desiredRole
+        } role.`,
+        variant: "info",
+      });
+      return;
+    }
+    setSubmittingRoleReq(true);
+    try {
+      const result = await requestRoleChange(desiredRole);
+      if (result.ok) {
+        toast({
+          title: "Role Request Sent to Super Admin",
+          description: result.message,
+          variant: "success",
+        });
+        await fetchLobbiesAndUsers();
+      } else {
+        toast({
+          title: "Request Failed",
+          description: result.message,
+          variant: "error",
+        });
+      }
+    } finally {
+      setSubmittingRoleReq(false);
     }
   };
 
@@ -395,35 +720,48 @@ export default function CollaborativeLobbyPage() {
     [isSuperAdmin, user.email, user.id]
   );
 
-  // Filter lobbies strictly on the client as well to guarantee role rules
+  // Has the current user already joined or been accepted into this room?
+  const isUserJoinedOrAccepted = useCallback(
+    (room: ReviewLobbySession) => {
+      if (isMyCreatedRoom(room)) return true;
+      if (room.is_joined) return true;
+      if (room.my_join_request?.status === "accepted") return true;
+      const myEmail = (user.email || "").trim().toLowerCase();
+      return (room.participants || []).some(
+        (p) =>
+          p.user_id === user.id ||
+          (Boolean(p.email) && p.email!.toLowerCase() === myEmail)
+      );
+    },
+    [isMyCreatedRoom, user.email, user.id]
+  );
+
+  // Filter lobbies for the primary list ("Rooms Created by Me" / "My Joined Rooms" / "All Workspace Lobbies")
   const visibleLobbies = lobbies.filter((room) => {
     if (isSuperAdmin) {
-      // Super Admin sees ALL lobbies across the system
       return true;
     }
     if (isAdmin) {
-      // Regular Admin sees ONLY the room(s) created by themselves — no one else's
       return isMyCreatedRoom(room);
     }
-    // Reviewers / Creators see rooms they created or joined
-    return (
-      isMyCreatedRoom(room) ||
-      (room.participants || []).some(
-        (p) =>
-          p.user_id === user.id ||
-          (Boolean(p.email) &&
-            p.email!.toLowerCase() === (user.email || "").toLowerCase())
-      )
-    );
+    return isUserJoinedOrAccepted(room);
   });
 
-  // Search filter by title or room code for 'My Joined Rooms' and 'Rooms Created by Me'
+  // Available rooms for Creators/Reviewers to request a joining code from the Admin
+  const availableLobbiesToRequest = lobbies.filter((room) => {
+    if (isSuperAdmin || isAdmin) return false;
+    if (room.permission_granted === false || room.status === "closed") return false;
+    return !isUserJoinedOrAccepted(room);
+  });
+
+  // Search filter by title or room code
   const filteredVisibleLobbies = visibleLobbies.filter((room) => {
     const q = roomSearchQuery.trim().toLowerCase();
     if (!q) return true;
     const roomCode = (room.room_code || (room as any).lobby_code || "").toLowerCase();
+    const joinCode = (room.manager_join_code || "").toLowerCase();
     const title = (room.title || "").toLowerCase();
-    return title.includes(q) || roomCode.includes(q);
+    return title.includes(q) || roomCode.includes(q) || joinCode.includes(q);
   });
 
   const handleJoinRoom = async (codeToJoin?: string) => {
@@ -440,8 +778,9 @@ export default function CollaborativeLobbyPage() {
     const code = (codeToJoin || joinCodeInput).trim();
     if (!code) {
       toast({
-        title: "Room Code Required",
-        description: "Enter the 6-digit Room Code shared by the Admin who created the room.",
+        title: "Lobby Joining Code Required",
+        description:
+          "Enter the 6-digit Lobby Joining Code provided by the Admin/Manager, or request access below.",
         variant: "error",
       });
       return;
@@ -476,7 +815,8 @@ export default function CollaborativeLobbyPage() {
       } else {
         toast({
           title: "Lobby Access Blocked",
-          description: data.error || "Invalid room code or lobby permission revoked.",
+          description:
+            data.error || "Invalid joining code or request not yet accepted by Admin.",
           variant: "error",
         });
       }
@@ -489,6 +829,7 @@ export default function CollaborativeLobbyPage() {
     e.preventDefault();
     if (!newRoomTitle.trim() || isSuperAdmin) return;
     try {
+      const recipientToSend = (newRoomRecipientEmail || user.email || "").trim();
       const res = await fetch("/api/lobby", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -497,32 +838,33 @@ export default function CollaborativeLobbyPage() {
           title: newRoomTitle.trim(),
           creator_id: user.id,
           email: user.email,
+          recipient_email: recipientToSend,
           creator_name: user.name,
           creator_role: user.role,
           security_role: user.securityRole,
-          brand_guidelines: newRoomGuidelines,
+          brand_guidelines: newRoomGuidelines || uploadedBrandRulesText,
           content_draft: newRoomDraft,
         }),
       });
       const data = await res.json();
       if (res.ok) {
         const createdTitle = data.title || newRoomTitle.trim();
-        const recipientToSend = newRoomRecipientEmail.trim();
         setActiveLobby(data);
         setDraftContent(data.shared_content_draft);
         setGuidelinesContent(data.shared_brand_guidelines);
         setCreatingRoom(false);
         setNewRoomTitle("");
         toast({
-          title: `Created Room #${data.room_code}`,
-          description:
-            "Your private room is ready. Share the 6-digit Room Code only with invited collaborators.",
+          title: `Created Room "${createdTitle}"`,
+          description: `15-Min Admin OTP: #${data.admin_otp} (self-destructs in 15m) · Manager-Only Joining Code: #${data.manager_join_code}`,
           variant: "success",
         });
         if (sendGmailOnCreate && recipientToSend) {
           setPendingGmailConfirmation({
             recipients: recipientToSend,
             roomCode: data.room_code,
+            adminOtp: data.admin_otp,
+            expiresAt: data.admin_otp_expires_at,
             lobbyTitle: createdTitle,
             otpType: "lobby_pin",
           });
@@ -659,6 +1001,17 @@ export default function CollaborativeLobbyPage() {
     }
   };
 
+  const copyToClipboard = (val: string, label: string) => {
+    navigator.clipboard.writeText(val);
+    setCopiedCode(val);
+    toast({
+      title: `Copied ${label}`,
+      description: `#${val} copied to clipboard.`,
+      variant: "info",
+    });
+    setTimeout(() => setCopiedCode(null), 2000);
+  };
+
   const myLobbyRevoked = !isSuperAdmin && user.lobbyAccess === false;
 
   if (!isAuthenticated) {
@@ -693,7 +1046,7 @@ export default function CollaborativeLobbyPage() {
             {isSuperAdmin
               ? "Super Admin Lobby Governance & Permissions"
               : isAdmin
-              ? "Admin Private Lobby Rooms"
+              ? "Admin Private Lobby Rooms · 15-Min OTP & Manager Joining Code"
               : "Collaborative Review Lobby"}
           </span>
         }
@@ -706,10 +1059,10 @@ export default function CollaborativeLobbyPage() {
         }
         description={
           isSuperAdmin
-            ? "As Super Admin, you can view all lobbies across all Admins, grant or suspend any lobby, discard any lobby, and grant or revoke lobby permission for any person. Super Admin cannot enter or access inside lobby rooms."
+            ? "As Super Admin, you can view all lobbies across all Admins, grant or suspend any lobby, discard any lobby, and update roles or lobby permissions for any person. Super Admin cannot enter or access inside lobby rooms."
             : isAdmin
-            ? "You can only see and manage the lobby rooms created by you. Share your room's 6-digit code with invited creators."
-            : "Enter the 6-digit Room Code shared by your Admin to join and co-edit inside an authorized room."
+            ? "You can only see and manage the lobby rooms created by you. Receive a 15-minute self-destructing Admin OTP by mail, and approve Creator requests using your Manager-Only Lobby Joining Code."
+            : "Request the Admin for a Lobby Joining Code or enter the code once the Admin accepts your request."
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -728,6 +1081,59 @@ export default function CollaborativeLobbyPage() {
         }
       />
 
+      {/* ROLE STATUS & REQUEST ROLE CHANGE BAR FOR NON-SUPER-ADMIN USERS */}
+      {!isSuperAdmin && (
+        <Card className="p-4 border-line bg-gradient-to-r from-purple-50/40 via-white to-brand-50/30">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-2.5 py-1 text-xs font-bold text-purple-800">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Active Role:{" "}
+                {user.securityRole === "REVIEWER"
+                  ? "MANAGER (REVIEWER)"
+                  : user.securityRole || "CREATOR"}
+              </span>
+              {user.roleRequestStatus === "pending" && user.requestedRole && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2.5 py-1 text-xs font-bold text-amber-900">
+                  <Clock className="h-3 w-3" />
+                  Requested Role Change:{" "}
+                  {user.requestedRole === "REVIEWER" ? "MANAGER" : user.requestedRole}{" "}
+                  (Pending Super Admin)
+                </span>
+              )}
+              <span className="text-xs text-ink-500">
+                Need a different role (e.g., Admin to create rooms)? Request a role change from Super Admin:
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              <select
+                value={desiredRole}
+                onChange={(e) =>
+                  setDesiredRole(e.target.value as "ADMIN" | "REVIEWER" | "CREATOR")
+                }
+                className="h-8 rounded-xl border border-line bg-white px-2.5 text-xs font-semibold text-ink-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+              >
+                <option value="ADMIN">Request: Admin</option>
+                <option value="REVIEWER">Request: Manager / Reviewer</option>
+                <option value="CREATOR">Request: Creator</option>
+              </select>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={submittingRoleReq}
+                onClick={handleRequestRoleFromLobby}
+                className="!border-purple-200 !bg-purple-50 !text-purple-800 hover:!bg-purple-100"
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" />
+                {submittingRoleReq ? "Sending..." : "Request Role Change"}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* REVOKED PERSON PERMISSION WARNING */}
       {myLobbyRevoked && (
         <Card className="p-5 border-rose-300 bg-rose-50/80 text-rose-950">
@@ -740,24 +1146,24 @@ export default function CollaborativeLobbyPage() {
                 Your Lobby Permission is Currently Revoked
               </h3>
               <p className="text-xs text-rose-800 mt-1">
-                Your account (<strong>{user.email}</strong>) has had its Lobby Permission revoked. Ask the Super Admin to grant your Lobby Permission.
+                Your account (<strong>{user.email}</strong>) has had its Lobby Permission revoked by the Super Admin. As soon as the Super Admin grants your Lobby Permission, this page will unlock automatically.
               </p>
             </div>
           </div>
         </Card>
       )}
 
-      {/* SUPER ADMIN PANEL: GRANT OR REVOKE LOBBY PERMISSION FOR ANY PERSON */}
+      {/* SUPER ADMIN PANEL: GRANT OR REVOKE LOBBY PERMISSION & UPDATE ROLES FOR ANY PERSON */}
       {isSuperAdmin && (
         <Card className="overflow-hidden border-line">
           <div className="px-6 py-4 border-b border-line bg-gradient-to-r from-purple-50/60 via-white to-brand-50/30 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className="text-sm font-bold text-ink-900 flex items-center gap-2">
                 <Crown className="h-4 w-4 text-purple-600" />
-                Super Admin Control: Grant or Revoke Person Lobby Permission
+                Super Admin Control: Person Roles &amp; Lobby Permissions
               </h3>
               <p className="text-xs text-ink-500 mt-0.5">
-                Grant or revoke lobby permissions for any Admin, Manager, or Creator across workspaces.
+                Change any user&apos;s role (Admin, Manager, Creator) or grant/revoke their Lobby Permission. Changes reflect immediately on the user&apos;s screen.
               </p>
             </div>
             <span className="rounded-full bg-purple-100 px-3 py-1 text-[11px] font-bold text-purple-800">
@@ -765,67 +1171,129 @@ export default function CollaborativeLobbyPage() {
             </span>
           </div>
 
-          <div className="p-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
             {employees
               .filter((emp) => emp.role !== "SUPER_ADMIN")
               .map((emp) => {
                 const allowed = emp.lobby_access !== false;
+                const hasPendingReq =
+                  emp.role_request_status === "pending" && Boolean(emp.requested_role);
                 return (
                   <div
                     key={emp.id}
                     className={cn(
-                      "rounded-xl border p-3.5 flex items-center justify-between gap-3 transition",
-                      allowed
+                      "rounded-xl border p-3.5 flex flex-col justify-between gap-3 transition",
+                      hasPendingReq
+                        ? "border-amber-300 bg-amber-50/40"
+                        : allowed
                         ? "border-line bg-white"
                         : "border-rose-200 bg-rose-50/40"
                     )}
                   >
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-bold text-ink-900 truncate">
-                          {emp.name}
-                        </span>
-                        <span
-                          className={cn(
-                            "rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase",
-                            emp.role === "ADMIN"
-                              ? "bg-purple-100 text-purple-800"
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="text-xs font-bold text-ink-900 truncate">
+                            {emp.name}
+                          </span>
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-[10px] font-bold uppercase",
+                              emp.role === "ADMIN"
+                                ? "bg-purple-100 text-purple-800"
+                                : emp.role === "REVIEWER"
+                                ? "bg-brand-100 text-brand-800"
+                                : "bg-mint-100 text-mint-800"
+                            )}
+                          >
+                            {emp.role === "ADMIN"
+                              ? "Admin"
                               : emp.role === "REVIEWER"
-                              ? "bg-brand-100 text-brand-800"
-                              : "bg-mint-100 text-mint-800"
+                              ? "Manager"
+                              : "Creator"}
+                          </span>
+                          {hasPendingReq && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-amber-200/80 px-2 py-0.5 text-[10px] font-bold text-amber-950">
+                              <Clock className="h-2.5 w-2.5" />
+                              Requested:{" "}
+                              {emp.requested_role === "REVIEWER"
+                                ? "Manager"
+                                : emp.requested_role}
+                            </span>
                           )}
+                        </div>
+                        <div className="text-[11px] text-ink-500 truncate mt-0.5">
+                          {emp.email} · {emp.brand_name}
+                        </div>
+                      </div>
+
+                      {allowed ? (
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePersonLobbyAccess(emp.id, false)}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
                         >
-                          {emp.role === "ADMIN"
-                            ? "Admin"
-                            : emp.role === "REVIEWER"
-                            ? "Manager"
-                            : "Creator"}
-                        </span>
-                      </div>
-                      <div className="text-[11px] text-ink-500 truncate mt-0.5">
-                        {emp.email} · {emp.brand_name}
-                      </div>
+                          <Lock className="h-3 w-3" />
+                          Revoke Lobby
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePersonLobbyAccess(emp.id, true)}
+                          className="shrink-0 inline-flex items-center gap-1 rounded-xl border border-mint-200 bg-mint-50 px-2.5 py-1.5 text-[11px] font-semibold text-mint-800 hover:bg-mint-100 transition"
+                        >
+                          <Unlock className="h-3 w-3" />
+                          Grant Lobby
+                        </button>
+                      )}
                     </div>
 
-                    {allowed ? (
-                      <button
-                        type="button"
-                        onClick={() => handleTogglePersonLobbyAccess(emp.id, false)}
-                        className="shrink-0 inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 hover:bg-rose-100 transition"
-                      >
-                        <Lock className="h-3 w-3" />
-                        Revoke Permission
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleTogglePersonLobbyAccess(emp.id, true)}
-                        className="shrink-0 inline-flex items-center gap-1 rounded-xl border border-mint-200 bg-mint-50 px-2.5 py-1.5 text-[11px] font-semibold text-mint-800 hover:bg-mint-100 transition"
-                      >
-                        <Unlock className="h-3 w-3" />
-                        Grant Permission
-                      </button>
-                    )}
+                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-line/60">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-ink-400">
+                        Set Role:
+                      </span>
+                      <div className="flex items-center gap-1 rounded-lg bg-ink-100 p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleSuperAdminUpdateRole(emp.id, "ADMIN")}
+                          disabled={emp.role === "ADMIN"}
+                          className={cn(
+                            "rounded-md px-2 py-1 text-[10px] font-bold transition",
+                            emp.role === "ADMIN"
+                              ? "bg-purple-600 text-white shadow-xs"
+                              : "text-ink-600 hover:bg-white hover:text-purple-700"
+                          )}
+                        >
+                          Admin
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSuperAdminUpdateRole(emp.id, "REVIEWER")}
+                          disabled={emp.role === "REVIEWER"}
+                          className={cn(
+                            "rounded-md px-2 py-1 text-[10px] font-bold transition",
+                            emp.role === "REVIEWER"
+                              ? "bg-brand-600 text-white shadow-xs"
+                              : "text-ink-600 hover:bg-white hover:text-brand-700"
+                          )}
+                        >
+                          Manager
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSuperAdminUpdateRole(emp.id, "CREATOR")}
+                          disabled={emp.role === "CREATOR"}
+                          className={cn(
+                            "rounded-md px-2 py-1 text-[10px] font-bold transition",
+                            emp.role === "CREATOR"
+                              ? "bg-mint-600 text-white shadow-xs"
+                              : "text-ink-600 hover:bg-white hover:text-mint-700"
+                          )}
+                        >
+                          Creator
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 );
               })}
@@ -833,7 +1301,7 @@ export default function CollaborativeLobbyPage() {
         </Card>
       )}
 
-      {/* CREATOR / REVIEWER: SINGLE CLEAN JOIN ROOM BAR (NOT SHOWN TO SUPER ADMIN OR REGULAR ADMIN) */}
+      {/* CREATOR / REVIEWER: JOIN ROOM WITH MANAGER'S LOBBY JOINING CODE */}
       {!isSuperAdmin && !isAdmin && (
         <Card className="p-5 border-line bg-ink-950 text-white">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -843,10 +1311,10 @@ export default function CollaborativeLobbyPage() {
               </span>
               <div>
                 <h3 className="text-xs font-bold uppercase tracking-wider text-mint-300">
-                  Join a Room with 6-Digit Room Code
+                  Join Room with Lobby Joining Code
                 </h3>
                 <p className="text-xs text-white/65">
-                  Enter the 6-digit Room Code provided by the Admin who created the room.
+                  Request a Lobby Joining Code from the Admin below, or enter the 6-digit Joining Code once the Admin accepts your request.
                 </p>
               </div>
             </div>
@@ -857,7 +1325,7 @@ export default function CollaborativeLobbyPage() {
                 maxLength={8}
                 value={joinCodeInput}
                 onChange={(e) => setJoinCodeInput(e.target.value)}
-                placeholder="6-digit code"
+                placeholder="Joining code"
                 disabled={myLobbyRevoked}
                 className="w-40 rounded-xl border border-white/20 bg-white/10 px-3.5 py-2 text-center font-mono text-sm font-black tracking-[0.2em] text-white placeholder:text-white/40 placeholder:tracking-normal focus:outline-none focus:ring-2 focus:ring-mint-400 disabled:opacity-50"
               />
@@ -876,18 +1344,24 @@ export default function CollaborativeLobbyPage() {
         </Card>
       )}
 
-      {/* REGULAR ADMIN: CREATE NEW ROOM FORM */}
+      {/* REGULAR ADMIN: CREATE NEW ROOM FORM WITH 15-MIN SELF-DESTRUCTING OTP VIA MAIL */}
       {creatingRoom && isAdmin && !isSuperAdmin && (
         <Card className="p-6 border-brand-300 bg-brand-50/20">
           <form onSubmit={handleCreateLobby} className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <h3 className="text-sm font-bold text-ink-900">
-                Create a New Private Review Room
-              </h3>
+              <div>
+                <h3 className="text-sm font-bold text-ink-900">
+                  Create a New Private Review Room
+                </h3>
+                <p className="text-[11px] text-ink-500 mt-0.5">
+                  Generates a <strong>15-minute self-destructing Admin OTP</strong> sent via mail, plus a <strong>different Lobby Joining Code</strong> visible only to you (Manager/Admin) for approving Creator join requests.
+                </p>
+              </div>
               <span className="text-[11px] font-medium text-ink-500">
-                Visible only to you ({user.email}) and participants you invite with the room code.
+                Visible only to you ({user.email}) and accepted collaborators.
               </span>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-ink-800 mb-1">
@@ -896,17 +1370,18 @@ export default function CollaborativeLobbyPage() {
                 <input
                   type="text"
                   required
-                  placeholder="e.g., EcoFresh Q3 Botanical Cleanser Claims Review"
+                  placeholder="Enter review room title..."
                   value={newRoomTitle}
                   onChange={(e) => setNewRoomTitle(e.target.value)}
                   className="w-full rounded-xl border border-line bg-white px-3.5 py-2 text-xs text-ink-900"
                 />
               </div>
+
               <div>
                 <label className="block text-xs font-semibold text-ink-800 mb-1 flex items-center justify-between">
                   <span className="inline-flex items-center gap-1.5">
                     <Mail className="h-3.5 w-3.5 text-brand-600" />
-                    Optional: Email Room Code via Gmail
+                    Admin Email for 15-Min Self-Destructing OTP
                   </span>
                   <label className="inline-flex items-center gap-1.5 text-[11px] font-normal text-ink-600 cursor-pointer">
                     <input
@@ -915,27 +1390,69 @@ export default function CollaborativeLobbyPage() {
                       onChange={(e) => setSendGmailOnCreate(e.target.checked)}
                       className="rounded border-line text-brand-600"
                     />
-                    Send email on creation
+                    Email 15-min OTP on creation
                   </label>
                 </label>
-                <input
-                  type="text"
-                  placeholder="Recipient email (optional)"
-                  value={newRoomRecipientEmail}
-                  onChange={(e) => setNewRoomRecipientEmail(e.target.value)}
-                  className="w-full rounded-xl border border-line bg-white px-3.5 py-2 text-xs text-ink-900"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="email"
+                    placeholder="Admin email to receive 15-min OTP..."
+                    value={newRoomRecipientEmail}
+                    onChange={(e) => setNewRoomRecipientEmail(e.target.value)}
+                    className="flex-1 rounded-xl border border-line bg-white px-3.5 py-2 text-xs text-ink-900"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={sendingPreviewOtp}
+                    onClick={() => handleSendServerMailOtp(undefined, newRoomRecipientEmail)}
+                    className="shrink-0"
+                  >
+                    <Timer className="h-3.5 w-3.5 text-rose-600" />
+                    {sendingPreviewOtp ? "Sending..." : "Get 15-Min OTP Now"}
+                  </Button>
+                </div>
+
+                {previewAdminOtp && (
+                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Timer className="h-3.5 w-3.5 text-rose-600 shrink-0" />
+                      <span className="text-ink-700">
+                        Admin OTP sent to <strong>{previewAdminOtp.recipient}</strong>:
+                      </span>
+                      <span className="font-mono font-black tracking-widest bg-ink-950 text-mint-300 px-2 py-0.5 rounded">
+                        #{previewAdminOtp.otp}
+                      </span>
+                    </div>
+                    <span className="text-[11px] font-bold text-rose-700 shrink-0">
+                      {formatCountdown(previewAdminOtp.expiresAt, nowMs)
+                        ? `Self-destructs in ${formatCountdown(previewAdminOtp.expiresAt, nowMs)}`
+                        : "Self-Destructed (Expired)"}
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-ink-800 mb-1">
-                  Brand Guidelines for This Room
-                </label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-ink-800">
+                    Brand Guidelines for This Room
+                  </label>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-purple-700">
+                    <BookOpen className="h-3 w-3" />
+                    {uploadedBrandDocsCount > 0
+                      ? `Synced with ${uploadedBrandDocsCount} uploaded Brand Knowledge doc(s)`
+                      : "Upload Brand Knowledge in Brand Knowledge tab or paste below"}
+                  </span>
+                </div>
                 <textarea
                   rows={3}
                   value={newRoomGuidelines}
                   onChange={(e) => setNewRoomGuidelines(e.target.value)}
+                  placeholder="Paste brand rules for this room or upload a Brand Knowledge document..."
                   className="w-full rounded-xl border border-line bg-white p-3 text-xs text-ink-900 font-mono"
                 />
               </div>
@@ -947,6 +1464,7 @@ export default function CollaborativeLobbyPage() {
                   rows={3}
                   value={newRoomDraft}
                   onChange={(e) => setNewRoomDraft(e.target.value)}
+                  placeholder="Paste the initial marketing draft to review in this room..."
                   className="w-full rounded-xl border border-line bg-white p-3 text-xs text-ink-900"
                 />
               </div>
@@ -964,6 +1482,76 @@ export default function CollaborativeLobbyPage() {
         </Card>
       )}
 
+      {/* CREATOR / COLLABORATOR: AVAILABLE ROOMS TO REQUEST JOINING CODE FROM ADMIN */}
+      {!isSuperAdmin && !isAdmin && availableLobbiesToRequest.length > 0 && (
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-purple-800 flex items-center gap-1.5">
+              <UserPlus className="h-3.5 w-3.5 text-purple-600" />
+              Available Rooms to Join ({availableLobbiesToRequest.length}) — Request Joining Code from Admin
+            </h3>
+            <p className="text-[11px] text-ink-500">
+              Request the Admin who created the lobby for a Lobby Joining Code. Once the Admin accepts your request, you can join via the code or open the room directly.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {availableLobbiesToRequest.map((room) => {
+              const myReqStatus = room.my_join_request?.status;
+              return (
+                <Card
+                  key={`avail-${room.room_code}`}
+                  className="p-4 border border-purple-200 bg-purple-50/20 flex flex-col justify-between gap-3"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-lg bg-purple-100 px-2.5 py-1 text-[10px] font-bold text-purple-800">
+                        <Lock className="h-3 w-3" />
+                        Joining Code Protected (Shown Only to Manager/Admin)
+                      </span>
+                      {myReqStatus === "pending" && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2.5 py-0.5 text-[10px] font-bold text-amber-900">
+                          <Clock className="h-3 w-3" />
+                          Request Pending Admin Approval
+                        </span>
+                      )}
+                      {myReqStatus === "declined" && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-100 px-2.5 py-0.5 text-[10px] font-bold text-rose-800">
+                          Request Declined
+                        </span>
+                      )}
+                    </div>
+                    <h4 className="text-sm font-bold text-ink-900 mt-2">{room.title}</h4>
+                    <p className="text-[11px] text-ink-500 mt-1">
+                      Created by Admin: <strong>{room.created_by || room.created_by_email}</strong>
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-line flex items-center justify-between gap-2">
+                    <span className="text-[11px] text-ink-500">
+                      {myReqStatus === "pending"
+                        ? "Waiting for Admin to accept your request..."
+                        : "Ask Admin for the Lobby Joining Code:"}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant={myReqStatus === "pending" ? "secondary" : "primary"}
+                      disabled={myLobbyRevoked}
+                      onClick={() => handleRequestJoinLobby(room.room_code, room.title)}
+                    >
+                      <KeyRound className="h-3.5 w-3.5" />
+                      {myReqStatus === "pending"
+                        ? "Resend Join Request"
+                        : "Request Joining Code"}
+                    </Button>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* LOBBY ROOMS LIST */}
       <div className="space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -973,7 +1561,7 @@ export default function CollaborativeLobbyPage() {
                 ? `All Workspace Lobbies (${filteredVisibleLobbies.length}) — Super Admin Governance View`
                 : isAdmin
                 ? `Rooms Created by Me (${filteredVisibleLobbies.length})`
-                : `My Joined Rooms (${filteredVisibleLobbies.length})`}
+                : `My Joined / Accepted Rooms (${filteredVisibleLobbies.length})`}
             </h3>
             {isAdmin && !isSuperAdmin && (
               <span className="text-[11px] text-ink-400">
@@ -1013,7 +1601,7 @@ export default function CollaborativeLobbyPage() {
                 ? "No lobbies currently exist in the system."
                 : isAdmin
                 ? `You (${user.email}) have not created any lobby rooms yet.`
-                : "You have not joined any lobby rooms yet. Enter a 6-digit Room Code above to join."}
+                : "You have not joined any lobby rooms yet. Request a Joining Code from an Admin above or enter a code to join."}
             </p>
             {isAdmin && !isSuperAdmin && !roomSearchQuery.trim() && (
               <div className="mt-4">
@@ -1032,7 +1620,12 @@ export default function CollaborativeLobbyPage() {
                 !isSuperAdmin &&
                 (activeLobby?.room_code || (activeLobby as any)?.lobby_code) === roomCode;
               const isMine = isMyCreatedRoom(room);
-              const permissionGranted = room.permission_granted !== false && room.status !== "closed";
+              const permissionGranted =
+                room.permission_granted !== false && room.status !== "closed";
+              const otpRemaining = formatCountdown(room.admin_otp_expires_at, nowMs);
+              const pendingRequests = (room.join_requests || []).filter(
+                (r) => r.status === "pending"
+              );
 
               return (
                 <Card
@@ -1046,24 +1639,23 @@ export default function CollaborativeLobbyPage() {
                       : "border-line hover:border-brand-300"
                   )}
                 >
-                  <div>
+                  <div className="space-y-3">
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-2 flex-wrap">
-                        {/* Only the Admin who created the room sees the Room Code */}
                         {isMine ? (
                           <span
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-ink-950 px-2.5 py-1 font-mono text-xs font-black tracking-widest text-mint-300"
-                            title="Your Room Code — share with invited collaborators"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-purple-950 px-2.5 py-1 font-mono text-xs font-black tracking-widest text-mint-300"
+                            title="Shown ONLY to you (Manager/Admin) — different from the 15-min Admin OTP"
                           >
                             <KeyRound className="h-3 w-3 text-mint-400" />
-                            CODE: #{roomCode}
+                            MANAGER JOIN CODE: #{room.manager_join_code || roomCode}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 rounded-lg bg-ink-100 border border-line px-2.5 py-1 text-[10px] font-bold text-ink-600">
-                            <Lock className="h-3 w-3 text-ink-500" />
+                            <CheckCircle2 className="h-3 w-3 text-mint-600" />
                             {isSuperAdmin
                               ? "Super Admin Oversight (No Room Access)"
-                              : "Joined Room"}
+                              : "Accepted by Admin · Authorized"}
                           </span>
                         )}
 
@@ -1088,11 +1680,144 @@ export default function CollaborativeLobbyPage() {
                       )}
                     </div>
 
-                    <h4 className="text-sm font-bold text-ink-900 mt-2.5">{room.title}</h4>
-                    <p className="text-[11px] text-ink-500 mt-1">
-                      Created by Admin: <strong>{room.created_by || room.created_by_email}</strong> •{" "}
-                      {(room.participants || []).length} participants
-                    </p>
+                    <div>
+                      <h4 className="text-sm font-bold text-ink-900">{room.title}</h4>
+                      <p className="text-[11px] text-ink-500 mt-0.5">
+                        Created by Admin:{" "}
+                        <strong>{room.created_by || room.created_by_email}</strong> •{" "}
+                        {(room.participants || []).length} participants
+                      </p>
+                    </div>
+
+                    {/* ADMIN-ONLY: 15-MINUTE SELF-DESTRUCTING OTP & DIFFERENT MANAGER JOINING CODE PANEL */}
+                    {isMine && (
+                      <div className="rounded-xl border border-line bg-ink-50/70 p-3 space-y-2 text-xs">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <Timer className="h-3.5 w-3.5 text-rose-600" />
+                            <span className="font-semibold text-ink-800">
+                              Admin Mail OTP (15-Min Self-Destruct):
+                            </span>
+                            {room.admin_otp && otpRemaining ? (
+                              <>
+                                <span className="font-mono font-black tracking-widest bg-ink-900 text-amber-300 px-2 py-0.5 rounded">
+                                  #{room.admin_otp}
+                                </span>
+                                <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded">
+                                  Expires in {otpRemaining}
+                                </span>
+                              </>
+                            ) : (
+                              <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
+                                Self-Destructed (Expired)
+                              </span>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setPendingGmailConfirmation({
+                                recipients: room.admin_otp_recipient || user.email,
+                                roomCode: room.room_code,
+                                adminOtp: room.admin_otp,
+                                expiresAt: room.admin_otp_expires_at,
+                                lobbyTitle: room.title,
+                                otpType: "lobby_pin",
+                              })
+                            }
+                            className="inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-white px-2 py-1 text-[10px] font-bold text-brand-700 hover:bg-brand-50"
+                          >
+                            <Mail className="h-3 w-3" />
+                            {room.admin_otp && otpRemaining
+                              ? "Email 15-Min OTP"
+                              : "Generate & Mail New 15-Min OTP"}
+                          </button>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-line/60">
+                          <div className="flex items-center gap-1.5">
+                            <KeyRound className="h-3.5 w-3.5 text-purple-600" />
+                            <span className="font-semibold text-ink-800">
+                              Different Joining Code (Shown Only to Manager):
+                            </span>
+                            <span className="font-mono font-black tracking-widest bg-purple-950 text-mint-300 px-2 py-0.5 rounded">
+                              #{room.manager_join_code || roomCode}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              copyToClipboard(
+                                room.manager_join_code || roomCode,
+                                "Manager Joining Code"
+                              )
+                            }
+                            className="inline-flex items-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[10px] font-bold text-ink-700 hover:bg-ink-100"
+                          >
+                            {copiedCode === (room.manager_join_code || roomCode) ? (
+                              <Check className="h-3 w-3 text-mint-600" />
+                            ) : (
+                              <Copy className="h-3 w-3" />
+                            )}
+                            Copy Joining Code
+                          </button>
+                        </div>
+
+                        {/* INCOMING CREATOR JOIN REQUESTS FOR THIS ROOM */}
+                        {pendingRequests.length > 0 && (
+                          <div className="pt-2 border-t border-amber-200 space-y-2">
+                            <div className="text-[11px] font-bold text-amber-900 flex items-center gap-1.5">
+                              <UserCheck className="h-3.5 w-3.5 text-amber-700" />
+                              Pending Creator Join Requests ({pendingRequests.length})
+                            </div>
+                            {pendingRequests.map((req) => (
+                              <div
+                                key={req.id}
+                                className="rounded-lg border border-amber-300 bg-amber-50/90 p-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+                              >
+                                <div>
+                                  <div className="font-bold text-ink-950">
+                                    {req.name}{" "}
+                                    <span className="font-mono font-normal text-ink-600">
+                                      ({req.email})
+                                    </span>
+                                  </div>
+                                  <div className="text-[10px] text-ink-600 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                    <span>Manager-Only Code for Creator:</span>
+                                    <span className="font-mono font-black bg-ink-950 text-mint-300 px-1.5 py-0.5 rounded">
+                                      #{req.requested_join_code || room.manager_join_code}
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleResolveJoinRequest(roomCode, req.id, true)
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-lg bg-mint-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-mint-500"
+                                  >
+                                    <Check className="h-3 w-3" />
+                                    Accept Request
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      handleResolveJoinRequest(roomCode, req.id, false)
+                                    }
+                                    className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1 text-[10px] font-bold text-rose-700 hover:bg-rose-50"
+                                  >
+                                    <X className="h-3 w-3" />
+                                    Decline
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* ACTIONS: SUPER ADMIN vs REGULAR ADMIN / CREATOR */}
@@ -1165,22 +1890,22 @@ export default function CollaborativeLobbyPage() {
                   <div className="flex items-center gap-2 flex-wrap">
                     {isMyCreatedRoom(activeLobby) && (
                       <>
-                        <span className="font-mono text-sm font-black tracking-widest bg-ink-950 text-mint-300 px-3 py-1 rounded-lg">
-                          ROOM CODE #{activeLobby.room_code || (activeLobby as any).lobby_code}
+                        <span className="font-mono text-xs font-black tracking-widest bg-purple-950 text-mint-300 px-3 py-1 rounded-lg">
+                          MANAGER JOIN CODE: #{activeLobby.manager_join_code || activeLobby.room_code}
                         </span>
                         <button
                           type="button"
-                          onClick={() => {
-                            navigator.clipboard.writeText(
-                              activeLobby.room_code || (activeLobby as any).lobby_code
-                            );
-                            setCopiedCode(true);
-                            setTimeout(() => setCopiedCode(false), 2000);
-                          }}
+                          onClick={() =>
+                            copyToClipboard(
+                              activeLobby.manager_join_code || activeLobby.room_code,
+                              "Manager Joining Code"
+                            )
+                          }
                           className="p-1.5 rounded-lg border border-line text-ink-600 hover:bg-ink-50"
-                          title="Copy Room Code"
+                          title="Copy Manager Joining Code"
                         >
-                          {copiedCode ? (
+                          {copiedCode ===
+                          (activeLobby.manager_join_code || activeLobby.room_code) ? (
                             <Check className="h-3.5 w-3.5 text-mint-600" />
                           ) : (
                             <Copy className="h-3.5 w-3.5" />
@@ -1227,14 +1952,26 @@ export default function CollaborativeLobbyPage() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold uppercase tracking-wider text-ink-500 mb-1.5 flex items-center gap-1.5">
-                  <Lock className="h-3.5 w-3.5 text-purple-600" />
-                  Shared Brand Knowledge Rules
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-ink-500 flex items-center gap-1.5">
+                    <Lock className="h-3.5 w-3.5 text-purple-600" />
+                    Shared Brand Knowledge Rules
+                  </label>
+                  {uploadedBrandRulesText && (
+                    <button
+                      type="button"
+                      onClick={() => setGuidelinesContent(uploadedBrandRulesText)}
+                      className="text-[11px] font-semibold text-purple-700 hover:underline"
+                    >
+                      Load Uploaded Brand Knowledge
+                    </button>
+                  )}
+                </div>
                 <textarea
                   rows={4}
                   value={guidelinesContent}
                   onChange={(e) => setGuidelinesContent(e.target.value)}
+                  placeholder="Brand knowledge rules for this room..."
                   className="w-full rounded-xl border border-line bg-ink-50/50 p-3.5 text-xs font-mono text-ink-800 focus:outline-none focus:ring-2 focus:ring-brand-500"
                 />
               </div>
@@ -1395,7 +2132,7 @@ export default function CollaborativeLobbyPage() {
         </div>
       )}
 
-      {/* GMAIL ROOM INVITE CONFIRMATION MODAL */}
+      {/* 15-MINUTE SELF-DESTRUCTING OTP EMAIL MODAL */}
       {pendingGmailConfirmation && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/60 backdrop-blur-xs p-4"
@@ -1409,10 +2146,10 @@ export default function CollaborativeLobbyPage() {
               </span>
               <div>
                 <h3 className="text-sm font-bold text-ink-950">
-                  Email Room Code via Gmail?
+                  Email 15-Minute Self-Destructing Admin OTP
                 </h3>
                 <p className="text-xs text-ink-500 mt-0.5">
-                  Send the 6-digit Room Code to your invited collaborator.
+                  Send the 6-digit Admin OTP via mail. This OTP automatically self-destructs after 15 minutes.
                 </p>
               </div>
             </div>
@@ -1423,7 +2160,7 @@ export default function CollaborativeLobbyPage() {
                   Recipient Email
                 </label>
                 <input
-                  type="text"
+                  type="email"
                   value={pendingGmailConfirmation.recipients}
                   onChange={(e) =>
                     setPendingGmailConfirmation((prev) =>
@@ -1433,54 +2170,90 @@ export default function CollaborativeLobbyPage() {
                   className="w-full rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-medium text-ink-900"
                 />
               </div>
-              <div className="flex items-center justify-between pt-1 border-t border-line/60">
-                <span className="text-ink-500">Room Code:</span>
-                <span className="font-mono font-black tracking-widest bg-ink-950 text-mint-300 px-2.5 py-0.5 rounded">
-                  #{pendingGmailConfirmation.roomCode}
+              <div className="flex items-center justify-between pt-2 border-t border-line/60">
+                <span className="text-ink-500 flex items-center gap-1">
+                  <Timer className="h-3.5 w-3.5 text-rose-600" />
+                  15-Min Admin OTP:
                 </span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-black tracking-widest bg-ink-950 text-mint-300 px-2.5 py-0.5 rounded">
+                    #{pendingGmailConfirmation.adminOtp || pendingGmailConfirmation.roomCode}
+                  </span>
+                  <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
+                    {formatCountdown(pendingGmailConfirmation.expiresAt, nowMs) || "15m TTL"}
+                  </span>
+                </div>
               </div>
             </div>
 
-            {needsGoogleAuth && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 space-y-2">
-                <p className="text-[11px] font-semibold text-amber-900">
-                  Connect Google first to authorize Gmail delivery:
-                </p>
+            <div className="rounded-xl border border-brand-200 bg-brand-50/50 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-semibold text-ink-900">
+                  Instant Mail Delivery (15-Min Self-Destruct):
+                </span>
                 <Button
                   type="button"
                   size="sm"
-                  variant="secondary"
-                  onClick={handleGoogleLogin}
-                  disabled={isGoogleSigningIn}
+                  variant="primary"
+                  disabled={
+                    sendingPreviewOtp || !pendingGmailConfirmation.recipients.trim()
+                  }
+                  onClick={() =>
+                    handleSendServerMailOtp(
+                      pendingGmailConfirmation.roomCode,
+                      pendingGmailConfirmation.recipients
+                    )
+                  }
                 >
-                  {isGoogleSigningIn ? "Connecting..." : "Connect Google"}
+                  <Send className="h-3.5 w-3.5" />
+                  {sendingPreviewOtp ? "Sending..." : "Send 15-Min OTP to Mail"}
                 </Button>
               </div>
-            )}
+            </div>
+
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[11px] font-semibold text-amber-900">
+                  {needsGoogleAuth
+                    ? "Or connect Google to send via your Gmail account:"
+                    : `Connected Gmail (${googleUser?.email}):`}
+                </p>
+                {needsGoogleAuth ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={handleGoogleLogin}
+                    disabled={isGoogleSigningIn}
+                  >
+                    {isGoogleSigningIn ? "Connecting..." : "Connect Google"}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={
+                      sendingGmailOtp || !pendingGmailConfirmation.recipients.trim()
+                    }
+                    onClick={executeConfirmedGmailSend}
+                  >
+                    <Mail className="h-3.5 w-3.5" />
+                    {sendingGmailOtp ? "Sending..." : "Send via Gmail"}
+                  </Button>
+                )}
+              </div>
+            </div>
 
             <div className="flex items-center justify-end gap-2 pt-2 border-t border-line">
               <Button
                 type="button"
                 size="sm"
                 variant="ghost"
-                disabled={sendingGmailOtp}
+                disabled={sendingGmailOtp || sendingPreviewOtp}
                 onClick={() => setPendingGmailConfirmation(null)}
               >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="primary"
-                disabled={
-                  sendingGmailOtp ||
-                  needsGoogleAuth ||
-                  !pendingGmailConfirmation.recipients.trim()
-                }
-                onClick={executeConfirmedGmailSend}
-              >
-                <Send className="h-3.5 w-3.5" />
-                {sendingGmailOtp ? "Sending..." : "Send Room Code"}
+                Close
               </Button>
             </div>
           </Card>

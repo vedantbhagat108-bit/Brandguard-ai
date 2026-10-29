@@ -37,6 +37,10 @@ export interface UserAccount {
   status: "approved" | "pending" | "revoked";
   initials: string;
   token?: string;
+  requestedRole?: "ADMIN" | "REVIEWER" | "CREATOR" | null;
+  roleRequestStatus?: "pending" | "approved" | "rejected" | null;
+  roleRequestNote?: string | null;
+  roleRequestAt?: string | null;
 }
 
 const DEFAULT_GUEST_USER: UserAccount = {
@@ -49,11 +53,13 @@ const DEFAULT_GUEST_USER: UserAccount = {
   roleLabel: "Not Signed In",
   department: "Marketing",
   brand_id: "b0000001-0000-4000-8000-000000000001",
-  brand_name: "EcoFresh Botanicals",
-  isApproved: false,
-  lobbyAccess: false,
-  status: "pending",
+  brand_name: "Default Workspace",
+  isApproved: true,
+  lobbyAccess: true,
+  status: "approved",
   initials: "WU",
+  requestedRole: null,
+  roleRequestStatus: null,
 };
 
 interface AuthContextValue {
@@ -98,6 +104,10 @@ interface AuthContextValue {
   loginCustom: (email: string, name: string, role: AppUserRole, department: string) => void;
   logout: () => void;
   requestAccess: () => Promise<void>;
+  requestRoleChange: (
+    requestedRole: "ADMIN" | "REVIEWER" | "CREATOR",
+    note?: string
+  ) => Promise<{ ok: boolean; message?: string; error?: string }>;
   loginModalOpen: boolean;
   setLoginModalOpen: (open: boolean) => void;
   refreshAccessStatus: () => Promise<void>;
@@ -107,6 +117,13 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const STORAGE_AUTH_KEY = "brandlens.auth.user.v6";
 const STORAGE_AUTH_ACTIVE_KEY = "brandlens.auth.authenticated.v3";
+
+function getRoleLabel(role?: string, isApproved: boolean = true): string {
+  if (role === "SUPER_ADMIN") return "Super Admin";
+  if (role === "ADMIN") return "Workspace Admin (ADMIN)";
+  if (role === "REVIEWER") return "Compliance Manager (REVIEWER)";
+  return isApproved ? "Content Creator (CREATOR)" : "Creator (Pending)";
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserAccount>(DEFAULT_GUEST_USER);
@@ -123,7 +140,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (stored && storedAuth === "true") {
         const parsed = JSON.parse(stored);
         if (parsed && parsed.id && parsed.email) {
-          setUser(parsed);
+          setUser({
+            ...parsed,
+            lobbyAccess: typeof parsed.lobbyAccess === "boolean" ? parsed.lobbyAccess : true,
+          });
           setIsAuthenticated(true);
         }
       }
@@ -156,13 +176,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const mapBackendUserToAccount = useCallback((apiUser: any, token?: string): UserAccount => {
-    const appRole: AppUserRole =
+    const secRole: SecurityRole =
       apiUser.role === "SUPER_ADMIN" ||
       apiUser.role === "ADMIN" ||
       apiUser.role === "REVIEWER" ||
-      apiUser.app_role === "manager"
+      apiUser.role === "CREATOR"
+        ? apiUser.role
+        : apiUser.app_role === "manager"
+        ? "ADMIN"
+        : "CREATOR";
+
+    const appRole: AppUserRole =
+      secRole === "SUPER_ADMIN" || secRole === "ADMIN" || secRole === "REVIEWER"
         ? "manager"
         : "content_creator";
+
     const initials = (apiUser.name || apiUser.username || apiUser.email || "U")
       .split(" ")
       .map((n: string) => n[0])
@@ -170,17 +198,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .toUpperCase()
       .slice(0, 2);
 
-    const isSuper = apiUser.role === "SUPER_ADMIN";
-
-    const roleLabel = isSuper
-      ? "Super Admin"
-      : apiUser.role === "ADMIN"
-      ? "Workspace Admin (ADMIN)"
-      : apiUser.role === "REVIEWER"
-      ? "Compliance Manager (REVIEWER)"
-      : apiUser.is_approved
-      ? "Content Creator (Authorized)"
-      : "Agency Contributor (Pending)";
+    const isApproved = apiUser.is_approved !== false;
+    const roleLabel = getRoleLabel(secRole, isApproved);
 
     return {
       id: apiUser.id,
@@ -188,38 +207,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       name: apiUser.name || apiUser.username || apiUser.email,
       email: apiUser.email,
       role: appRole,
-      securityRole: apiUser.role as SecurityRole,
+      securityRole: secRole,
       roleLabel,
       department: apiUser.department || "Marketing",
       brand_id: apiUser.brand_id,
       brand_name: apiUser.brand_name || "Default Workspace",
-      isApproved: Boolean(apiUser.is_approved),
+      isApproved,
       lobbyAccess:
-        typeof apiUser.lobby_access === "boolean"
-          ? apiUser.lobby_access
-          : Boolean(apiUser.is_approved),
-      status: apiUser.is_approved ? "approved" : "pending",
+        typeof apiUser.lobby_access === "boolean" ? apiUser.lobby_access : true,
+      status: isApproved ? "approved" : "pending",
       initials,
       token,
+      requestedRole: apiUser.requested_role || null,
+      roleRequestStatus: apiUser.role_request_status || null,
+      roleRequestNote: apiUser.role_request_note || null,
+      roleRequestAt: apiUser.role_request_at || null,
     };
   }, []);
 
   const refreshAccessStatus = useCallback(async () => {
-    if (!user.id) return;
+    if (!user.id && !user.email) return;
     try {
-      const res = await fetch(`/api/access/status?user_id=${encodeURIComponent(user.id)}`);
+      const qs = new URLSearchParams({
+        user_id: user.id || "",
+        email: user.email || "",
+      });
+      const res = await fetch(`/api/access/status?${qs.toString()}`, {
+        cache: "no-store",
+      });
       if (res.ok) {
         const data = await res.json();
-        const isApproved = user.role === "manager" ? true : Boolean(data.is_approved);
+        const apiUser = data.user;
+        const resolvedSecurityRole: SecurityRole =
+          (apiUser?.role as SecurityRole) ||
+          (data.role as SecurityRole) ||
+          user.securityRole ||
+          "CREATOR";
+        const resolvedAppRole: AppUserRole =
+          resolvedSecurityRole === "SUPER_ADMIN" ||
+          resolvedSecurityRole === "ADMIN" ||
+          resolvedSecurityRole === "REVIEWER"
+            ? "manager"
+            : "content_creator";
+        const isApproved =
+          resolvedAppRole === "manager" ? true : data.is_approved !== false;
         const lobbyAccess =
-          user.role === "manager"
+          resolvedSecurityRole === "SUPER_ADMIN"
             ? true
             : typeof data.lobby_access === "boolean"
             ? data.lobby_access
-            : isApproved;
+            : true;
         const status = data.grant?.status || (isApproved ? "approved" : "pending");
+        const roleLabel = getRoleLabel(resolvedSecurityRole, isApproved);
+
         setUser((prev) => {
-          const updated = { ...prev, isApproved, lobbyAccess, status };
+          const updated: UserAccount = {
+            ...prev,
+            id: apiUser?.id || prev.id,
+            username: apiUser?.username || prev.username,
+            name: apiUser?.name || prev.name,
+            role: resolvedAppRole,
+            securityRole: resolvedSecurityRole,
+            roleLabel,
+            brand_id: apiUser?.brand_id || prev.brand_id,
+            brand_name: apiUser?.brand_name || prev.brand_name,
+            department: apiUser?.department || prev.department,
+            isApproved,
+            lobbyAccess,
+            status,
+            requestedRole: apiUser?.requested_role ?? null,
+            roleRequestStatus: apiUser?.role_request_status ?? null,
+            roleRequestNote: apiUser?.role_request_note ?? null,
+            roleRequestAt: apiUser?.role_request_at ?? null,
+          };
           try {
             localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(updated));
           } catch {}
@@ -229,7 +289,75 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn("Failed to refresh access status:", e);
     }
-  }, [user.id, user.role]);
+  }, [user.email, user.id, user.securityRole]);
+
+  // Real-time role & permission synchronization: poll every 2.5s + on focus + on custom event
+  useEffect(() => {
+    if (!isAuthenticated || (!user.id && !user.email)) return;
+
+    void refreshAccessStatus();
+
+    const interval = window.setInterval(() => {
+      void refreshAccessStatus();
+    }, 2500);
+
+    const handleFocus = () => void refreshAccessStatus();
+    const handleRoleEvent = () => void refreshAccessStatus();
+
+    window.addEventListener("focus", handleFocus);
+    window.addEventListener("brandlens-role-updated", handleRoleEvent);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("brandlens-role-updated", handleRoleEvent);
+    };
+  }, [isAuthenticated, refreshAccessStatus, user.email, user.id]);
+
+  const requestRoleChange = useCallback(
+    async (requestedRole: "ADMIN" | "REVIEWER" | "CREATOR", note?: string) => {
+      if (!user.id && !user.email) {
+        return { ok: false, error: "Sign in first to request a role change." };
+      }
+      try {
+        const res = await fetch("/api/access/grant", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-User-Id": user.id,
+            "X-Security-Role": user.securityRole || "CREATOR",
+          },
+          body: JSON.stringify({
+            action: "request_role_change",
+            target_user_id: user.id,
+            email: user.email,
+            name: user.name,
+            requested_role: requestedRole,
+            note,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return {
+            ok: false,
+            error: data.error || "Could not submit role change request.",
+          };
+        }
+        await refreshAccessStatus();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("brandlens-role-updated"));
+        }
+        return {
+          ok: true,
+          message:
+            data.message ||
+            `Requested role change to ${requestedRole} from Super Admin.`,
+        };
+      } catch (e: any) {
+        return { ok: false, error: e.message || "Request failed" };
+      }
+    },
+    [refreshAccessStatus, user.email, user.id, user.name, user.securityRole]
+  );
 
   const loginWithCredentials = useCallback(
     async (identifier: string, password: string) => {
@@ -414,13 +542,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         role,
         securityRole: isManager ? "ADMIN" : "CREATOR",
-        roleLabel: isManager ? "Brand Governance Manager" : "Content Creator",
+        roleLabel: isManager ? "Workspace Admin (ADMIN)" : "Content Creator (CREATOR)",
         department,
         brand_id: "b0000001-0000-4000-8000-000000000001",
-        brand_name: "EcoFresh Botanicals",
-        isApproved: isManager,
-        lobbyAccess: isManager,
-        status: isManager ? "approved" : "pending",
+        brand_name: "Default Workspace",
+        isApproved: true,
+        lobbyAccess: true,
+        status: "approved",
         initials,
       };
 
@@ -475,8 +603,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             brand_id:
               cloudProfile?.brand_id ||
               "b0000001-0000-4000-8000-000000000001",
-            is_approved: cloudProfile?.is_approved ?? true,
-            lobby_access: cloudProfile?.lobby_access ?? true,
           }),
         });
 
@@ -496,7 +622,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               brand_id:
                 cloudProfile?.brand_id ||
                 "b0000001-0000-4000-8000-000000000001",
-              brand_name: cloudProfile?.brand_name || "EcoFresh Botanicals",
+              brand_name: cloudProfile?.brand_name || "Default Workspace",
               department: cloudProfile?.department || "Marketing",
               is_approved: true,
               lobby_access: true,
@@ -538,8 +664,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               role: cloudProfile.role,
               department: cloudProfile.department,
               brand_id: cloudProfile.brand_id,
-              is_approved: cloudProfile.is_approved,
-              lobby_access: cloudProfile.lobby_access,
             }),
           });
           if (syncRes.ok) {
@@ -585,6 +709,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         loginCustom,
         logout,
         requestAccess,
+        requestRoleChange,
         loginModalOpen,
         setLoginModalOpen,
         refreshAccessStatus,

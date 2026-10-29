@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { ConfidentialityLevel, DocType, StoredDocument } from './types.ts';
 import { generateDeterministicEmbedding } from './gemini.ts';
 
@@ -14,10 +16,19 @@ export interface StoredChunk {
   embedding: number[];
   tokens: string[];
   metadata: Record<string, any>;
+  updated_at?: string;
 }
 
+const LEGACY_DEMO_DOCS = new Set([
+  'Enterprise_Brand_Style_Guide_2026.md',
+  'Approved_Enterprise_Facts_2026.md',
+  'EcoFresh_Botanicals_Compliance_Policy.md',
+  'Product_Facts_and_Clinical_Claims_2026.md',
+  'Sales_and_Enterprise_SLA_Facts.md',
+]);
+
 function tokenize(text: string): string[] {
-  return (text.toLowerCase().match(/\b[a-z0-9_\-\.]{2,}\b/g) || []);
+  return text.toLowerCase().match(/\b[a-z0-9_\-\.]{2,}\b/g) || [];
 }
 
 function cosineSimilarity(v1: number[], v2: number[]): number {
@@ -37,18 +48,86 @@ function cosineSimilarity(v1: number[], v2: number[]): number {
 export class HybridVectorStore {
   private chunks: Map<string, StoredChunk> = new Map();
   private docVersions: Map<string, string> = new Map();
+  private initialized = false;
 
   constructor() {
-    this.seedDefaultKnowledgeBase();
+    this.loadFromDisk();
+  }
+
+  private getStorageFilePath(): string {
+    try {
+      const localDir = path.join(process.cwd(), '.data');
+      if (!fs.existsSync(localDir)) {
+        fs.mkdirSync(localDir, { recursive: true });
+      }
+      return path.join(localDir, 'knowledge-store.json');
+    } catch {
+      return '/tmp/brandlens-knowledge-store.json';
+    }
+  }
+
+  public loadFromDisk(): void {
+    try {
+      const filePath = this.getStorageFilePath();
+      if (!fs.existsSync(filePath)) {
+        this.initialized = true;
+        return;
+      }
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed.chunks)) {
+        this.chunks.clear();
+        for (const [id, chunk] of parsed.chunks) {
+          if (id && chunk && chunk.document_name && !LEGACY_DEMO_DOCS.has(chunk.document_name)) {
+            this.chunks.set(id, chunk as StoredChunk);
+          }
+        }
+      }
+      if (Array.isArray(parsed.docVersions)) {
+        this.docVersions.clear();
+        for (const [doc, ver] of parsed.docVersions) {
+          if (doc && !LEGACY_DEMO_DOCS.has(doc)) {
+            this.docVersions.set(doc, String(ver));
+          }
+        }
+      }
+      this.initialized = true;
+    } catch {
+      this.initialized = true;
+    }
+  }
+
+  public saveToDisk(): void {
+    try {
+      const filePath = this.getStorageFilePath();
+      const payload = {
+        chunks: Array.from(this.chunks.entries()),
+        docVersions: Array.from(this.docVersions.entries()),
+        updatedAt: new Date().toISOString(),
+      };
+      fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    } catch {
+      // Ignore write errors in read-only environments
+    }
   }
 
   public count(): number {
+    this.loadFromDisk();
     return this.chunks.size;
   }
 
+  public listChunks(): StoredChunk[] {
+    this.loadFromDisk();
+    return Array.from(this.chunks.values()).filter(
+      (c) => !LEGACY_DEMO_DOCS.has(c.document_name)
+    );
+  }
+
   public listDocuments(): StoredDocument[] {
+    this.loadFromDisk();
     const docs = new Map<string, StoredDocument>();
     for (const c of this.chunks.values()) {
+      if (LEGACY_DEMO_DOCS.has(c.document_name)) continue;
       if (!docs.has(c.document_name)) {
         docs.set(c.document_name, {
           document: c.document_name,
@@ -57,7 +136,7 @@ export class HybridVectorStore {
           version: c.version,
           department: c.department,
           confidentiality: c.confidentiality,
-          updated_at: new Date().toISOString(),
+          updated_at: c.updated_at || new Date().toISOString(),
         });
       }
       docs.get(c.document_name)!.chunks += 1;
@@ -66,6 +145,7 @@ export class HybridVectorStore {
   }
 
   public deleteDocument(documentName: string): number {
+    this.loadFromDisk();
     let deleted = 0;
     for (const [cid, chunk] of this.chunks.entries()) {
       if (chunk.document_name === documentName) {
@@ -74,7 +154,14 @@ export class HybridVectorStore {
       }
     }
     this.docVersions.delete(documentName);
+    this.saveToDisk();
     return deleted;
+  }
+
+  public clearAll(): void {
+    this.chunks.clear();
+    this.docVersions.clear();
+    this.saveToDisk();
   }
 
   public addChunks(
@@ -90,14 +177,22 @@ export class HybridVectorStore {
     docType: DocType,
     version: string = '1.0',
     department: string = 'marketing',
-    confidentiality: ConfidentialityLevel = 'internal',
+    confidentiality: ConfidentialityLevel = 'internal'
   ) {
+    if (LEGACY_DEMO_DOCS.has(documentName)) {
+      return;
+    }
+    this.loadFromDisk();
     this.deleteDocument(documentName);
     this.docVersions.set(documentName, version);
+    const now = new Date().toISOString();
 
     for (const c of chunks) {
       const text = c.text;
-      const emb = c.embedding && c.embedding.length > 0 ? c.embedding : generateDeterministicEmbedding(text);
+      const emb =
+        c.embedding && c.embedding.length > 0
+          ? c.embedding
+          : generateDeterministicEmbedding(text);
       this.chunks.set(c.chunk_id, {
         chunk_id: c.chunk_id,
         document_name: documentName,
@@ -111,15 +206,19 @@ export class HybridVectorStore {
         embedding: emb,
         tokens: tokenize(text),
         metadata: c.metadata || {},
+        updated_at: now,
       });
     }
+    this.saveToDisk();
   }
 
   public getChunk(chunkId: string): StoredChunk | undefined {
+    this.loadFromDisk();
     return this.chunks.get(chunkId);
   }
 
   public getChunks(chunkIds: string[]): Record<string, StoredChunk> {
+    this.loadFromDisk();
     const res: Record<string, StoredChunk> = {};
     for (const id of chunkIds) {
       const c = this.chunks.get(id);
@@ -137,6 +236,7 @@ export class HybridVectorStore {
     topK?: number;
     minSimilarity?: number;
   }): Array<{ chunk: StoredChunk; similarity: number }> {
+    this.loadFromDisk();
     const {
       queryText,
       queryEmbedding,
@@ -146,7 +246,9 @@ export class HybridVectorStore {
       minSimilarity = 0.35,
     } = params;
 
-    let candidates = Array.from(this.chunks.values());
+    let candidates = Array.from(this.chunks.values()).filter(
+      (c) => !LEGACY_DEMO_DOCS.has(c.document_name)
+    );
     if (docType) {
       candidates = candidates.filter((c) => c.doc_type === docType);
     }
@@ -198,7 +300,6 @@ export class HybridVectorStore {
       const scoreSparse = sparseItem ? sparseItem.score : 0;
       const rrf = 0.7 / (60 + rDense) + 0.3 / (60 + rSparse);
 
-      // Balanced hybrid score: 50% dense semantic + 50% sparse keyword matching
       const combinedSim = Number(
         (Math.max(simDense, 0) * 0.5 + Math.min(scoreSparse, 1.0) * 0.5).toFixed(4)
       );
@@ -212,7 +313,7 @@ export class HybridVectorStore {
     for (const item of fused.slice(0, topK)) {
       if (item.similarity >= minSimilarity) {
         results.push({ chunk: item.chunk, similarity: item.similarity });
-      } else if (results.length === 0 && item.similarity >= 0.20) {
+      } else if (results.length === 0 && item.similarity >= 0.2) {
         results.push({ chunk: item.chunk, similarity: item.similarity });
       }
     }
@@ -225,6 +326,7 @@ export class HybridVectorStore {
       const { getEmbeddings, hasValidGeminiKey } = await import('./gemini.ts');
       if (hasValidGeminiKey) {
         const chunkList = Array.from(this.chunks.values());
+        if (chunkList.length === 0) return;
         const texts = chunkList.map((c) => c.text);
         const embeddings = await getEmbeddings(texts);
         chunkList.forEach((c, idx) => {
@@ -232,86 +334,11 @@ export class HybridVectorStore {
             c.embedding = embeddings[idx];
           }
         });
+        this.saveToDisk();
       }
     } catch {
       // Fallback preserved
     }
-  }
-
-  private seedDefaultKnowledgeBase() {
-    // Seed Style Rules
-    const styleChunks = [
-      {
-        chunk_id: 'style-tone-01',
-        text: 'Tone of Voice: Our voice is confident, humble, helpful, and direct. Never use hyperbole, aggressive superlative words like "unbeatable", "revolutionary", or "#1". Avoid puffery.',
-        section: 'Tone & Voice Guidelines',
-        page: 1,
-      },
-      {
-        chunk_id: 'style-naming-02',
-        text: 'Product Naming: Always write and capitalize "BrandGuard AI". Never refer to BrandGuard as "the script", "the bot", or uncapitalized "brandguard".',
-        section: 'Brand Identity & Terminology',
-        page: 1,
-      },
-      {
-        chunk_id: 'style-legal-03',
-        text: 'Legal & Guarantees: Never make absolute claims or zero-defect promises such as "100% bug-free", "unbreakable security", or "never fails". All service guarantees must reference SLA contracts.',
-        section: 'Legal & Risk Guidelines',
-        page: 2,
-      },
-      {
-        chunk_id: 'style-jargon-04',
-        text: 'Terminology: Avoid outdated corporate buzzwords such as "synergize", "game-changing paradigm", or "next-gen disruptor". Speak plainly about technical functionality.',
-        section: 'Editorial Vocabulary',
-        page: 2,
-      },
-    ];
-
-    this.addChunks(
-      styleChunks,
-      'Enterprise_Brand_Style_Guide_2026.md',
-      'style_rule',
-      '2.4',
-      'marketing',
-      'internal',
-    );
-
-    // Seed Approved Facts
-    const factChunks = [
-      {
-        chunk_id: 'fact-sla-01',
-        text: 'BrandGuard AI contracts guarantee an SLA uptime of 99.95% backed by financial credit remedies for enterprise subscribers.',
-        section: 'Service Level Agreement',
-        page: 1,
-      },
-      {
-        chunk_id: 'fact-security-02',
-        text: 'Compliance Certifications: BrandGuard AI is SOC2 Type II certified, ISO 27001 compliant, and GDPR compliant with data residency in US and EU regions.',
-        section: 'Security & Certifications',
-        page: 1,
-      },
-      {
-        chunk_id: 'fact-scale-03',
-        text: 'Active Deployment Metric: As of Q3 2026, BrandGuard AI protects over 1,200 enterprise organizations across 45 countries.',
-        section: 'Corporate Milestones',
-        page: 2,
-      },
-      {
-        chunk_id: 'fact-latency-04',
-        text: 'Performance Benchmark: Vector hybrid retrieval achieves p99 response latency under 45ms for enterprise document sets up to 2 million chunks.',
-        section: 'Architecture Benchmarks',
-        page: 2,
-      },
-    ];
-
-    this.addChunks(
-      factChunks,
-      'Approved_Enterprise_Facts_2026.md',
-      'approved_fact',
-      '3.1',
-      'marketing',
-      'internal',
-    );
   }
 }
 
@@ -319,7 +346,7 @@ const globalForVectorStore = globalThis as unknown as {
   hybridVectorStore?: HybridVectorStore;
 };
 
-if (!globalForVectorStore.hybridVectorStore) {
+if (!globalForVectorStore.hybridVectorStore || typeof globalForVectorStore.hybridVectorStore.listChunks !== 'function') {
   globalForVectorStore.hybridVectorStore = new HybridVectorStore();
 }
 

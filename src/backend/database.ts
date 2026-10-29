@@ -40,6 +40,10 @@ export interface DBUserRecord {
   lobby_access: boolean;
   created_at: string;
   password_updated_at?: string;
+  requested_role?: 'ADMIN' | 'REVIEWER' | 'CREATOR' | null;
+  role_request_status?: 'pending' | 'approved' | 'rejected' | null;
+  role_request_note?: string | null;
+  role_request_at?: string | null;
 }
 
 export interface BrandGuidelineRecord {
@@ -97,6 +101,7 @@ export interface AuditLogRecord {
     | 'LOBBY_JOINED'
     | 'LOBBY_APPROVED'
     | 'ROLE_UPDATED'
+    | 'ROLE_CHANGE_REQUESTED'
     | 'LOBBY_ACCESS_UPDATED'
     | 'GMAIL_OTP_SENT'
     | 'VISUAL_ASSET_UPLOADED'
@@ -210,7 +215,7 @@ export class MultiTenantSecurityDB {
       brand_name: 'Global Governance',
       created_at: now,
     };
-    const brandEco: BrandWorkspaceRecord = {
+    const brandDefault: BrandWorkspaceRecord = {
       id: 'b0000001-0000-4000-8000-000000000001',
       name: 'Default Workspace',
       brand_name: 'Default Workspace',
@@ -218,69 +223,7 @@ export class MultiTenantSecurityDB {
     };
 
     this.workspaces.set(brandGlobal.id, brandGlobal);
-    this.workspaces.set(brandEco.id, brandEco);
-
-    const gLegal: BrandGuidelineRecord = {
-      id: 'g0000001-0000-4000-8000-000000000001',
-      brand_id: brandEco.id,
-      title: 'Therapeutic & Medical Claims Prohibition',
-      category: 'legal_marketing_policy',
-      content:
-        "EcoFresh products are natural dietary wellness supplements. Marketing content must NEVER claim that our products 'cure', 'treat', 'prevent', or offer a '100% guarantee' for any medical disease or physiological condition.",
-      version: 1,
-      created_at: now,
-    };
-    const gDisclaimer: BrandGuidelineRecord = {
-      id: 'g0000002-0000-4000-8000-000000000002',
-      brand_id: brandEco.id,
-      title: 'Metabolism & Dietary FDA Disclaimer',
-      category: 'disclaimers',
-      content:
-        "Any promotional copy referencing metabolism, weight, or digestive health must include: 'These statements have not been evaluated by the FDA. This product is not intended to diagnose, treat, cure, or prevent any disease.'",
-      version: 1,
-      created_at: now,
-    };
-    const gTone: BrandGuidelineRecord = {
-      id: 'g0000003-0000-4000-8000-000000000003',
-      brand_id: brandEco.id,
-      title: 'Authentic & Transparent Tone',
-      category: 'style_tone',
-      content:
-        "Copy must adopt an authentic, educational, and humble tone. Avoid aggressive sales urgency, fear-mongering, or hyperbolic superlatives like 'miracle cure'.",
-      version: 1,
-      created_at: now,
-    };
-    this.guidelines.set(gLegal.id, gLegal);
-    this.guidelines.set(gDisclaimer.id, gDisclaimer);
-    this.guidelines.set(gTone.id, gTone);
-
-    store.addChunks(
-      [
-        {
-          chunk_id: 'ecofresh-legal-01',
-          text: gLegal.content,
-          section: gLegal.title,
-          page: 1,
-        },
-        {
-          chunk_id: 'ecofresh-disclaimer-02',
-          text: gDisclaimer.content,
-          section: gDisclaimer.title,
-          page: 1,
-        },
-        {
-          chunk_id: 'ecofresh-tone-03',
-          text: gTone.content,
-          section: gTone.title,
-          page: 1,
-        },
-      ],
-      'EcoFresh_Botanicals_Compliance_Policy.md',
-      'style_rule',
-      '1.0',
-      'marketing',
-      'internal'
-    );
+    this.workspaces.set(brandDefault.id, brandDefault);
   }
 
   public purgeLegacyDemoRecords() {
@@ -290,6 +233,9 @@ export class MultiTenantSecurityDB {
     for (const demoPin of LEGACY_DEMO_PINS) {
       this.pins.delete(demoPin);
     }
+    this.guidelines.delete('g0000001-0000-4000-8000-000000000001');
+    this.guidelines.delete('g0000002-0000-4000-8000-000000000002');
+    this.guidelines.delete('g0000003-0000-4000-8000-000000000003');
     for (const u of this.users.values()) {
       if (typeof u.lobby_access !== 'boolean') {
         u.lobby_access =
@@ -364,13 +310,16 @@ export class MultiTenantSecurityDB {
   }
 
   public findUserByIdOrIdentifier(identifier: string): DBUserRecord | undefined {
-    const byId = this.users.get(identifier);
+    const clean = (identifier || '').trim();
+    if (!clean) return undefined;
+    const byId = this.users.get(clean);
     if (byId) return byId;
-    return this.findUserByUsernameOrEmail(identifier);
+    return this.findUserByUsernameOrEmail(clean);
   }
 
   public findUserByEmail(email: string): DBUserRecord | undefined {
-    const clean = email.trim().toLowerCase();
+    const clean = (email || '').trim().toLowerCase();
+    if (!clean) return undefined;
     for (const u of this.users.values()) {
       if (u.email.toLowerCase() === clean) return u;
     }
@@ -378,7 +327,8 @@ export class MultiTenantSecurityDB {
   }
 
   public findUserByUsername(username: string): DBUserRecord | undefined {
-    const clean = username.trim().toLowerCase();
+    const clean = (username || '').trim().toLowerCase();
+    if (!clean) return undefined;
     for (const u of this.users.values()) {
       if (
         u.username.toLowerCase() === clean ||
@@ -391,7 +341,8 @@ export class MultiTenantSecurityDB {
   }
 
   public findUserByUsernameOrEmail(identifier: string): DBUserRecord | undefined {
-    const clean = identifier.trim().toLowerCase();
+    const clean = (identifier || '').trim().toLowerCase();
+    if (!clean) return undefined;
     for (const u of this.users.values()) {
       if (
         u.email.toLowerCase() === clean ||
@@ -410,6 +361,7 @@ export class MultiTenantSecurityDB {
     targetIdentifier: string;
     newRole: DBRole;
   }): DBUserRecord {
+    this.loadFromDisk();
     const actor = this.findUserByIdOrIdentifier(params.actorId);
     const effectiveActorRole = (actor?.role || params.actorRole || 'ADMIN').toUpperCase();
 
@@ -428,15 +380,12 @@ export class MultiTenantSecurityDB {
 
     const previousRole = target.role;
     target.role = params.newRole;
-    if (
-      params.newRole === 'SUPER_ADMIN' ||
-      params.newRole === 'ADMIN' ||
-      params.newRole === 'REVIEWER'
-    ) {
-      target.is_approved = true;
-      target.lobby_access = true;
-    }
+    target.is_approved = true;
+    target.lobby_access = true;
+    target.requested_role = null;
+    target.role_request_status = 'approved';
     this.users.set(target.id, target);
+    this.saveToDisk();
 
     this.logAudit({
       brand_id: target.brand_id,
@@ -448,7 +397,111 @@ export class MultiTenantSecurityDB {
         username: target.username,
         previous_role: previousRole,
         new_role: params.newRole,
-        updated_by: actor?.email || 'system',
+        updated_by: actor?.email || 'Super Admin',
+      },
+    });
+
+    return target;
+  }
+
+  public requestRoleChange(params: {
+    userId?: string;
+    userEmail?: string;
+    userName?: string;
+    requestedRole: 'ADMIN' | 'REVIEWER' | 'CREATOR';
+    note?: string;
+  }): DBUserRecord {
+    this.loadFromDisk();
+    let user =
+      (params.userId ? this.findUserByIdOrIdentifier(params.userId) : undefined) ||
+      (params.userEmail ? this.findUserByEmail(params.userEmail) : undefined);
+
+    if (!user && params.userEmail) {
+      const cleanEmail = params.userEmail.trim().toLowerCase();
+      const defaultBrandId = 'b0000001-0000-4000-8000-000000000001';
+      user = {
+        id: params.userId || `usr_${Date.now()}`,
+        username: cleanEmail.split('@')[0],
+        email: cleanEmail,
+        hashed_password: hashPassword('session-user'),
+        role: 'CREATOR',
+        brand_id: defaultBrandId,
+        brand_name: 'Default Workspace',
+        name: params.userName || cleanEmail.split('@')[0],
+        department: 'Marketing',
+        is_approved: true,
+        lobby_access: true,
+        created_at: new Date().toISOString(),
+      };
+    }
+
+    if (!user) {
+      const err: any = new Error('User account not found.');
+      err.status = 404;
+      throw err;
+    }
+
+    user.requested_role = params.requestedRole;
+    user.role_request_status = 'pending';
+    user.role_request_note = (params.note || '').trim() || null;
+    user.role_request_at = new Date().toISOString();
+    this.users.set(user.id, user);
+    this.saveToDisk();
+
+    this.logAudit({
+      brand_id: user.brand_id,
+      user_id: user.id,
+      user_email: user.email,
+      action: 'ROLE_CHANGE_REQUESTED',
+      details: {
+        user: user.email,
+        current_role: user.role,
+        requested_role: params.requestedRole,
+        note: user.role_request_note || 'Role change requested',
+      },
+    });
+
+    return user;
+  }
+
+  public resolveRoleChangeRequest(params: {
+    actorId: string;
+    actorRole?: string;
+    targetIdentifier: string;
+    approve: boolean;
+  }): DBUserRecord {
+    this.loadFromDisk();
+    const target = this.findUserByIdOrIdentifier(params.targetIdentifier);
+    if (!target) {
+      const err: any = new Error(`Target user "${params.targetIdentifier}" not found.`);
+      err.status = 404;
+      throw err;
+    }
+
+    const requested = target.requested_role || target.role;
+    if (params.approve && target.requested_role) {
+      return this.updateUserRole({
+        actorId: params.actorId,
+        actorRole: params.actorRole || 'SUPER_ADMIN',
+        targetIdentifier: target.id,
+        newRole: target.requested_role,
+      });
+    }
+
+    target.requested_role = null;
+    target.role_request_status = 'rejected';
+    this.users.set(target.id, target);
+    this.saveToDisk();
+
+    this.logAudit({
+      brand_id: target.brand_id,
+      user_id: params.actorId,
+      user_email: 'admin@gmail.com',
+      action: 'ROLE_UPDATED',
+      details: {
+        target_user: target.email,
+        requested_role: requested,
+        decision: 'DECLINED',
       },
     });
 

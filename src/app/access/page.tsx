@@ -14,6 +14,10 @@ import {
   UserPlus,
   RotateCcw,
   Crown,
+  ArrowUpRight,
+  Clock,
+  Check,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/providers/toast-provider";
@@ -33,6 +37,10 @@ interface DBUserSummary {
   department: string;
   is_approved: boolean;
   lobby_access?: boolean;
+  requested_role?: "ADMIN" | "REVIEWER" | "CREATOR" | null;
+  role_request_status?: "pending" | "approved" | "rejected" | null;
+  role_request_note?: string | null;
+  role_request_at?: string | null;
   created_at: string;
   password_updated_at?: string | null;
 }
@@ -86,6 +94,7 @@ export default function AccessManagementPage() {
     setLoginModalOpen,
     refreshAccessStatus,
     requestAccess,
+    requestRoleChange,
   } = useAuth();
   const { toast } = useToast();
 
@@ -94,11 +103,17 @@ export default function AccessManagementPage() {
   const [loading, setLoading] = useState(true);
   const [showAuditLogs, setShowAuditLogs] = useState(false);
 
-  const loadSecurityData = useCallback(async () => {
-    setLoading(true);
+  // Role change request form state for non-Super-Admin users
+  const [desiredRole, setDesiredRole] = useState<"ADMIN" | "REVIEWER" | "CREATOR">("ADMIN");
+  const [roleRequestNote, setRoleRequestNote] = useState("");
+  const [submittingRoleRequest, setSubmittingRoleRequest] = useState(false);
+
+  const loadSecurityData = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const pinsRes = await fetch("/api/pins", {
         headers: user.token ? { Authorization: `Bearer ${user.token}` } : {},
+        cache: "no-store",
       });
 
       if (pinsRes.ok) {
@@ -109,16 +124,24 @@ export default function AccessManagementPage() {
     } catch (e) {
       console.error(e);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [user.token]);
 
   useEffect(() => {
-    loadSecurityData();
-    if (!isManager) {
+    loadSecurityData(false);
+    refreshAccessStatus();
+  }, [loadSecurityData, refreshAccessStatus]);
+
+  // Poll every 2.5s so role changes & requests reflect ASAP across sessions
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const interval = window.setInterval(() => {
+      loadSecurityData(true);
       refreshAccessStatus();
-    }
-  }, [isManager, loadSecurityData, refreshAccessStatus]);
+    }, 2500);
+    return () => window.clearInterval(interval);
+  }, [isAuthenticated, loadSecurityData, refreshAccessStatus]);
 
   const handleGrantAction = async (
     targetUserId: string,
@@ -153,7 +176,9 @@ export default function AccessManagementPage() {
           description: data.message || `Updated permissions for ${targetUserId}.`,
           variant: action.includes("revoke") ? "info" : "success",
         });
-        await loadSecurityData();
+        await loadSecurityData(true);
+        await refreshAccessStatus();
+        window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
       } else {
         toast({ title: "Action failed", description: data.error, variant: "error" });
       }
@@ -184,15 +209,17 @@ export default function AccessManagementPage() {
       const data = await res.json();
       if (res.ok) {
         toast({
-          title: `Role Updated to ${newRole}`,
+          title: `Role Updated to ${newRole === "REVIEWER" ? "MANAGER" : newRole}`,
           description: data.message,
           variant: "success",
         });
-        await loadSecurityData();
+        await loadSecurityData(true);
+        await refreshAccessStatus();
+        window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
       } else {
         toast({
           title: "Role Update Denied",
-          description: data.error || "Only an Admin can change user roles.",
+          description: data.error || "Only Super Admin can change user roles.",
           variant: "error",
         });
       }
@@ -200,6 +227,85 @@ export default function AccessManagementPage() {
       toast({ title: "Error", description: e.message, variant: "error" });
     }
   };
+
+  const handleResolveRoleRequest = async (
+    targetUserId: string,
+    approve: boolean
+  ) => {
+    try {
+      const res = await fetch("/api/access/grant", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-User-Role": "manager",
+          "X-Security-Role": user.securityRole || "SUPER_ADMIN",
+          "X-User-Id": user.id,
+        },
+        body: JSON.stringify({
+          target_user_id: targetUserId,
+          action: approve ? "approve_role_request" : "reject_role_request",
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        toast({
+          title: approve ? "Role Request Approved" : "Role Request Declined",
+          description: data.message,
+          variant: approve ? "success" : "info",
+        });
+        await loadSecurityData(true);
+        await refreshAccessStatus();
+        window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
+      } else {
+        toast({
+          title: "Action Failed",
+          description: data.error || "Could not process role request.",
+          variant: "error",
+        });
+      }
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "error" });
+    }
+  };
+
+  const handleSubmitRoleRequest = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (desiredRole === user.securityRole) {
+      toast({
+        title: "Already Assigned",
+        description: `Your account already holds the ${
+          desiredRole === "REVIEWER" ? "Manager" : desiredRole
+        } role.`,
+        variant: "info",
+      });
+      return;
+    }
+    setSubmittingRoleRequest(true);
+    try {
+      const result = await requestRoleChange(desiredRole, roleRequestNote);
+      if (result.ok) {
+        toast({
+          title: "Role Change Requested",
+          description: result.message,
+          variant: "success",
+        });
+        setRoleRequestNote("");
+        await loadSecurityData(true);
+      } else {
+        toast({
+          title: "Request Failed",
+          description: result.message,
+          variant: "error",
+        });
+      }
+    } finally {
+      setSubmittingRoleRequest(false);
+    }
+  };
+
+  const pendingRoleRequests = dbUsers.filter(
+    (u) => u.role_request_status === "pending" && u.requested_role
+  );
 
   if (!isAuthenticated) {
     return (
@@ -234,11 +340,11 @@ export default function AccessManagementPage() {
               ? "Super Admin RBAC & Lobby Permissions"
               : isAdmin
               ? "Workspace Admin Access Console"
-              : "Workspace Access & Permissions"}
+              : "Workspace Access & Role Requests"}
           </span>
         }
         title="User Roles & Lobby Permissions"
-        description="Manage workspace roles and grant or revoke Lobby permissions cleanly in one place."
+        description="Manage workspace roles, respond to role change requests, and grant or revoke Lobby permissions in real time."
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             <button
@@ -248,7 +354,12 @@ export default function AccessManagementPage() {
               <UserPlus className="h-3.5 w-3.5" />
               Add / Switch Account
             </button>
-            <Button size="sm" variant="secondary" onClick={loadSecurityData} disabled={loading}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => loadSecurityData(false)}
+              disabled={loading}
+            >
               <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
               Refresh
             </Button>
@@ -269,10 +380,15 @@ export default function AccessManagementPage() {
               <span className="text-xs font-mono text-brand-600">(@{user.username})</span>
             )}
           </div>
-          <div className="text-xs text-ink-500 mt-0.5 flex items-center gap-1.5">
+          <div className="text-xs text-ink-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
             <Building2 className="h-3.5 w-3.5 text-brand-600" />
-            <span>
-              {user.email} · {isSuperAdmin ? "SUPER ADMIN" : user.securityRole || "CREATOR"}
+            <span>{user.email}</span>
+            <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold text-purple-800 uppercase">
+              {isSuperAdmin
+                ? "SUPER ADMIN"
+                : user.securityRole === "REVIEWER"
+                ? "MANAGER"
+                : user.securityRole || "CREATOR"}
             </span>
           </div>
         </Card>
@@ -308,6 +424,160 @@ export default function AccessManagementPage() {
         </Card>
       </div>
 
+      {/* SUPER ADMIN: PENDING ROLE CHANGE REQUESTS */}
+      {isSuperAdmin && pendingRoleRequests.length > 0 && (
+        <Card className="overflow-hidden border-amber-300 bg-amber-50/40">
+          <div className="px-6 py-4 border-b border-amber-200 bg-amber-100/50 flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-ink-950 flex items-center gap-2">
+                <Clock className="h-4 w-4 text-amber-700" />
+                Pending User Role Change Requests ({pendingRoleRequests.length})
+              </h3>
+              <p className="text-xs text-ink-600 mt-0.5">
+                Users below have requested a role change. Approving updates their role immediately across their active session.
+              </p>
+            </div>
+          </div>
+          <div className="divide-y divide-amber-200/70">
+            {pendingRoleRequests.map((u) => (
+              <div
+                key={`req-${u.id}`}
+                className="px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs bg-white/80"
+              >
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-ink-950">{u.name}</span>
+                    <span className="font-mono text-ink-500">({u.email})</span>
+                    <span className="rounded-full bg-ink-100 px-2 py-0.5 text-[10px] font-bold text-ink-700">
+                      Current: {u.role === "REVIEWER" ? "MANAGER" : u.role}
+                    </span>
+                    <span className="text-amber-700 font-bold">&rarr;</span>
+                    <span className="rounded-full bg-purple-600 px-2.5 py-0.5 text-[10px] font-bold text-white">
+                      Requested: {u.requested_role === "REVIEWER" ? "MANAGER (REVIEWER)" : u.requested_role}
+                    </span>
+                  </div>
+                  {u.role_request_note && (
+                    <p className="text-[11px] text-ink-600 mt-1 italic">
+                      Note: &ldquo;{u.role_request_note}&rdquo;
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleResolveRoleRequest(u.id, true)}
+                    className="inline-flex items-center gap-1 rounded-xl bg-mint-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-mint-500 transition shadow-xs"
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    Approve Role Change
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleResolveRoleRequest(u.id, false)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-100 transition"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* NON-SUPER-ADMIN: REQUEST ROLE CHANGE FROM SUPER ADMIN */}
+      {!isSuperAdmin && (
+        <Card className="overflow-hidden border-purple-200 bg-gradient-to-r from-purple-50/50 via-white to-brand-50/30">
+          <div className="p-6 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+            <div className="space-y-1.5 max-w-xl">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-100 px-2.5 py-0.5 text-[11px] font-bold text-purple-800">
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  Role Change Request
+                </span>
+                <span className="text-xs font-semibold text-ink-600">
+                  Current Role:{" "}
+                  <strong className="text-ink-950">
+                    {user.securityRole === "REVIEWER"
+                      ? "MANAGER (REVIEWER)"
+                      : user.securityRole || "CREATOR"}
+                  </strong>
+                </span>
+                {user.roleRequestStatus === "pending" && user.requestedRole && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2.5 py-0.5 text-[11px] font-bold text-amber-900">
+                    <Clock className="h-3 w-3" />
+                    Pending Request:{" "}
+                    {user.requestedRole === "REVIEWER" ? "MANAGER" : user.requestedRole}
+                  </span>
+                )}
+                {user.roleRequestStatus === "approved" && (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-mint-100 border border-mint-300 px-2.5 py-0.5 text-[11px] font-bold text-mint-900">
+                    <CheckCircle2 className="h-3 w-3" />
+                    Role Updated by Super Admin
+                  </span>
+                )}
+              </div>
+              <h3 className="text-sm font-bold text-ink-950">
+                Request Role Change from Super Admin
+              </h3>
+              <p className="text-xs text-ink-500 leading-relaxed">
+                Need Admin or Manager permissions to create lobby rooms or approve compliance reviews? Submit a role request to the Super Admin — as soon as it is approved, your role updates automatically.
+              </p>
+            </div>
+
+            <form
+              onSubmit={handleSubmitRoleRequest}
+              className="flex flex-col sm:flex-row items-stretch sm:items-end gap-2.5 shrink-0"
+            >
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">
+                  Requested Role
+                </label>
+                <select
+                  value={desiredRole}
+                  onChange={(e) =>
+                    setDesiredRole(e.target.value as "ADMIN" | "REVIEWER" | "CREATOR")
+                  }
+                  className="h-9 rounded-xl border border-line bg-white px-3 text-xs font-semibold text-ink-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                >
+                  <option value="ADMIN">Admin (Create Rooms &amp; Manage)</option>
+                  <option value="REVIEWER">Manager / Reviewer (Approve Reviews)</option>
+                  <option value="CREATOR">Creator (Submit &amp; Collaborate)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-wider text-ink-500 mb-1">
+                  Reason / Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={roleRequestNote}
+                  onChange={(e) => setRoleRequestNote(e.target.value)}
+                  placeholder="e.g., Need Admin to host review room"
+                  className="h-9 w-full sm:w-56 rounded-xl border border-line bg-white px-3 text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                />
+              </div>
+              <Button
+                type="submit"
+                size="sm"
+                variant="primary"
+                disabled={submittingRoleRequest}
+                className="h-9 !bg-purple-600 hover:!bg-purple-500"
+              >
+                <ArrowUpRight className="h-3.5 w-3.5" />
+                {submittingRoleRequest
+                  ? "Sending..."
+                  : user.roleRequestStatus === "pending"
+                  ? "Update Request"
+                  : "Request Role Change"}
+              </Button>
+            </form>
+          </div>
+        </Card>
+      )}
+
       {/* USERS & PERMISSIONS TABLE */}
       <Card className="overflow-hidden border-line">
         <div className="px-6 py-4 border-b border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -318,10 +588,10 @@ export default function AccessManagementPage() {
             </h3>
             <p className="text-xs text-ink-500 mt-0.5">
               {isSuperAdmin
-                ? "Super Admin can promote roles and grant or revoke Lobby permissions for any person."
+                ? "Super Admin can change any user's role (reflects immediately) and grant or revoke Lobby permissions."
                 : isAdmin
                 ? "Grant or revoke Lobby permissions for creators and managers in your workspace."
-                : "Registered workspace members and their Lobby permission status."}
+                : "Registered workspace members and their live role and Lobby permission status."}
             </p>
           </div>
           <button
@@ -338,6 +608,8 @@ export default function AccessManagementPage() {
           {dbUsers.map((u) => {
             const hasLobbyAccess = u.lobby_access !== false;
             const targetIsSuperAdmin = u.role === "SUPER_ADMIN";
+            const hasPendingRoleReq =
+              u.role_request_status === "pending" && Boolean(u.requested_role);
 
             return (
               <div
@@ -391,7 +663,16 @@ export default function AccessManagementPage() {
                               : "bg-rose-50 text-rose-800 border border-rose-200"
                           )}
                         >
-                          {hasLobbyAccess ? "Lobby Permission: Granted" : "Lobby Permission: Revoked"}
+                          {hasLobbyAccess
+                            ? "Lobby Permission: Granted"
+                            : "Lobby Permission: Revoked"}
+                        </span>
+                      )}
+                      {hasPendingRoleReq && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 border border-amber-300 px-2 py-0.5 text-[10px] font-bold text-amber-900">
+                          <Clock className="h-3 w-3" />
+                          Requested Role:{" "}
+                          {u.requested_role === "REVIEWER" ? "MANAGER" : u.requested_role}
                         </span>
                       )}
                     </div>
@@ -403,6 +684,18 @@ export default function AccessManagementPage() {
 
                 {!targetIsSuperAdmin && (
                   <div className="flex flex-wrap items-center gap-2">
+                    {isSuperAdmin && hasPendingRoleReq && (
+                      <button
+                        type="button"
+                        onClick={() => handleResolveRoleRequest(u.id, true)}
+                        className="inline-flex items-center gap-1 rounded-xl bg-amber-600 px-2.5 py-1.5 text-[11px] font-bold text-white hover:bg-amber-500 transition shadow-xs"
+                      >
+                        <Check className="h-3 w-3" />
+                        Approve{" "}
+                        {u.requested_role === "REVIEWER" ? "Manager" : u.requested_role}
+                      </button>
+                    )}
+
                     {isSuperAdmin && (
                       <div className="flex items-center gap-1 rounded-xl bg-ink-100 p-1">
                         <button
@@ -447,8 +740,8 @@ export default function AccessManagementPage() {
                       </div>
                     )}
 
-                    {(isSuperAdmin || (isManager && u.role !== "ADMIN")) && (
-                      hasLobbyAccess ? (
+                    {(isSuperAdmin || (isManager && u.role !== "ADMIN")) &&
+                      (hasLobbyAccess ? (
                         <button
                           type="button"
                           onClick={() => handleGrantAction(u.id, "revoke_lobby")}
@@ -466,8 +759,7 @@ export default function AccessManagementPage() {
                           <KeyRound className="h-3 w-3" />
                           Grant Lobby Permission
                         </button>
-                      )
-                    )}
+                      ))}
                   </div>
                 )}
               </div>
@@ -495,7 +787,11 @@ export default function AccessManagementPage() {
                       : "bg-amber-100 text-amber-800"
                   )}
                 >
-                  {user.isApproved ? <Unlock className="h-5 w-5" /> : <Lock className="h-5 w-5" />}
+                  {user.isApproved ? (
+                    <Unlock className="h-5 w-5" />
+                  ) : (
+                    <Lock className="h-5 w-5" />
+                  )}
                 </span>
                 <div>
                   <h3 className="text-sm font-bold text-ink-900">
@@ -505,10 +801,12 @@ export default function AccessManagementPage() {
                   </h3>
                   <p className="text-xs text-ink-600 mt-1 max-w-2xl leading-relaxed">
                     {user.isApproved
-                      ? `Your account (${user.email}) is active. Lobby Permission: ${
+                      ? `Your account (${user.email}) is active. Role: ${
+                          user.securityRole || "CREATOR"
+                        } · Lobby Permission: ${
                           user.lobbyAccess !== false ? "Granted" : "Revoked"
                         }.`
-                      : `Your creator account (${user.email}) is awaiting approval.`}
+                      : `Your account (${user.email}) is awaiting approval.`}
                   </p>
                 </div>
               </div>

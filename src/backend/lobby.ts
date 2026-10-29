@@ -28,9 +28,30 @@ export interface LobbyNoteItem {
   timestamp: string;
 }
 
+export interface LobbyJoinRequest {
+  id: string;
+  user_id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  note?: string;
+  requested_join_code: string; // Different 6-digit joining code shown ONLY to the Admin/Manager who created the lobby
+  status: 'pending' | 'accepted' | 'declined';
+  requested_at: string;
+  resolved_at?: string;
+}
+
 export interface ReviewLobby {
   lobby_code: string;
   room_code: string;
+  // 15-minute self-destructing OTP sent to the Admin via mail
+  admin_otp?: string | null;
+  admin_otp_created_at?: string | null;
+  admin_otp_expires_at?: number | null; // epoch ms (15 min TTL)
+  admin_otp_recipient?: string | null;
+  // Different 6-digit Lobby Joining Code shown ONLY to the Manager/Admin who created the lobby
+  manager_join_code: string;
+  join_requests: LobbyJoinRequest[];
   title: string;
   created_by: string;
   created_by_email?: string;
@@ -49,6 +70,18 @@ export interface ReviewLobby {
 }
 
 const LEGACY_DEMO_LOBBY_CODES = new Set(['882104', '441092']);
+export const ADMIN_OTP_TTL_MS = 15 * 60 * 1000; // 15 minutes self-destruct
+
+function generateDistinctSixDigitCode(exclude: Array<string | undefined | null> = []): string {
+  const excludedSet = new Set(exclude.filter(Boolean).map((c) => String(c).trim()));
+  for (let i = 0; i < 50; i++) {
+    const candidate = Math.floor(100000 + Math.random() * 900000).toString();
+    if (!excludedSet.has(candidate)) {
+      return candidate;
+    }
+  }
+  return Math.floor(100000 + Math.random() * 900000).toString();
+}
 
 function getLobbiesStorageFilePath(): string {
   try {
@@ -142,7 +175,7 @@ function saveLobbiesToDisk() {
   }
 }
 
-// Clean any legacy demo lobbies if present in memory and sync from disk
+// Clean any legacy demo lobbies and self-destruct expired 15-min Admin OTPs
 function sanitizeLobbies() {
   if (!globalForLobby.lobbiesLoadedFromDisk) {
     loadLobbiesFromDisk();
@@ -151,10 +184,33 @@ function sanitizeLobbies() {
   for (const demoCode of LEGACY_DEMO_LOBBY_CODES) {
     lobbies.delete(demoCode);
   }
+  let dirty = false;
+  const nowMs = Date.now();
   for (const room of lobbies.values()) {
     if (typeof room.permission_granted !== 'boolean') {
       room.permission_granted = room.status !== 'closed';
+      dirty = true;
     }
+    if (!room.manager_join_code) {
+      room.manager_join_code = generateDistinctSixDigitCode([room.room_code, room.admin_otp]);
+      dirty = true;
+    }
+    if (!Array.isArray(room.join_requests)) {
+      room.join_requests = [];
+      dirty = true;
+    }
+    // Self-destruct Admin OTP after 15 minutes
+    if (
+      room.admin_otp &&
+      typeof room.admin_otp_expires_at === 'number' &&
+      nowMs > room.admin_otp_expires_at
+    ) {
+      room.admin_otp = null;
+      dirty = true;
+    }
+  }
+  if (dirty) {
+    saveLobbiesToDisk();
   }
 }
 
@@ -163,12 +219,18 @@ export function listLobbies(): ReviewLobby[] {
   return Array.from(lobbies.values());
 }
 
+/**
+ * Returns lobbies formatted for the requesting user:
+ * - Super Admin sees all lobbies for governance, without secret codes.
+ * - Regular Admin sees rooms created by themselves (including `manager_join_code`, `admin_otp`, and `join_requests`).
+ * - Creators/Managers see rooms they have joined AND a directory of active rooms they can request to join (with `manager_join_code` and `admin_otp` hidden unless they are the room creator!).
+ */
 export function listLobbiesForUser(params: {
   user_id?: string | null;
   email?: string | null;
   security_role?: string | null;
   role?: string | null;
-}): ReviewLobby[] {
+}): any[] {
   sanitizeLobbies();
   const all = Array.from(lobbies.values());
   const userId = (params.user_id || '').trim();
@@ -180,39 +242,79 @@ export function listLobbiesForUser(params: {
   }
 
   // Super Admin sees ALL lobbies for oversight (grant/revoke permission or discard),
-  // but cannot enter/access the room or view its confidential PIN
+  // but NEVER sees confidential codes or room draft content
   if (isSuperAdminUser(userId, email, secRole)) {
-    return all;
+    return all.map((room) => ({
+      ...room,
+      admin_otp: null,
+      manager_join_code: '••••••',
+      shared_content: '',
+      shared_content_draft: '',
+    }));
   }
 
-  // Regular Admin sees ONLY lobbies created by themselves — no one else's
+  // Regular Admin sees ONLY lobbies created by themselves — with full access to manager_join_code, admin_otp, and join_requests
   if (secRole === 'ADMIN') {
     return all.filter((room) => isRoomCreator(room, userId, email));
   }
 
-  // Managers / Creators see rooms they created or rooms they have joined via PIN
-  return all.filter(
-    (room) =>
-      isRoomCreator(room, userId, email) ||
-      (room.participants || []).some(
-        (p) =>
-          p.user_id === userId ||
-          (Boolean(email) && (p.email || '').toLowerCase() === email)
-      )
-  );
+  // Creators / Reviewers see all active lobbies in the workspace so they can either:
+  // 1. Open rooms they have already joined / been accepted into
+  // 2. Request the Admin for a Lobby Joining Code on rooms they haven't joined yet
+  // IMPORTANT: `manager_join_code` and `admin_otp` are strictly hidden from non-creators!
+  return all.map((room) => {
+    const isCreator = isRoomCreator(room, userId, email);
+    if (isCreator) return room;
+
+    const isParticipant = (room.participants || []).some(
+      (p) =>
+        (Boolean(userId) && p.user_id === userId) ||
+        (Boolean(email) && (p.email || '').toLowerCase() === email)
+    );
+
+    const myRequest = (room.join_requests || []).find(
+      (r) =>
+        (Boolean(userId) && r.user_id === userId) ||
+        (Boolean(email) && r.email.toLowerCase() === email)
+    );
+
+    return {
+      ...room,
+      // Hide manager-only joining code & admin OTP from non-managers/creators
+      admin_otp: null,
+      manager_join_code: undefined,
+      // Only expose the user's own join request metadata (without revealing the manager-only code unless the manager shares it, or show status)
+      my_join_request: myRequest
+        ? {
+            id: myRequest.id,
+            status: myRequest.status,
+            requested_at: myRequest.requested_at,
+            resolved_at: myRequest.resolved_at,
+          }
+        : null,
+      join_requests: [],
+      is_joined: isParticipant || myRequest?.status === 'accepted',
+      // Only include draft content if already a participant or accepted
+      shared_content: isParticipant || myRequest?.status === 'accepted' ? room.shared_content : '',
+      shared_content_draft:
+        isParticipant || myRequest?.status === 'accepted' ? room.shared_content_draft : '',
+    };
+  });
 }
 
 // Generate 6-digit OTP (15 minutes expiry matching Database/email)
 export function requestOtp(email: string, role: UserRole = 'content_creator') {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
-  const expiresAt = Date.now() + 15 * 60 * 1000;
+  const expiresAt = Date.now() + ADMIN_OTP_TTL_MS;
   pendingOtps.set(email.toLowerCase(), { otp, expiresAt, role });
 
-  sendOtpEmail(email, otp, 'BrandLens AI').catch(() => {});
+  sendOtpEmail(email, otp, 'BrandLens AI (Self-Destructs in 15 Min)').catch(() => {});
 
   return {
     success: true,
-    message: `OTP sent to ${email}`,
+    message: `15-minute self-destructing OTP sent to ${email}`,
+    expires_at: expiresAt,
+    ttl_minutes: 15,
     dev_otp: otp,
   };
 }
@@ -226,7 +328,7 @@ export function verifyOtp(email: string, enteredOtp: string) {
 
   if (Date.now() > record.expiresAt) {
     pendingOtps.delete(email.toLowerCase());
-    throw new Error('OTP has expired. Please request a new one.');
+    throw new Error('OTP has self-destructed (expired after 15 minutes). Please request a new one.');
   }
 
   if (record.otp !== enteredOtp.trim()) {
@@ -257,11 +359,14 @@ export function getSession(token: string): UserSession | undefined {
   return sessions.get(token);
 }
 
-// Admin creates a collaborative review lobby
+// Admin creates a collaborative review lobby with:
+// 1. A 15-minute self-destructing Admin OTP sent via mail
+// 2. A DIFFERENT 6-digit Lobby Joining Code (`manager_join_code`) shown ONLY to the Manager/Admin
 export function createLobby(params: {
   manager_id: string;
   manager_name?: string;
   manager_email: string;
+  recipient_email?: string;
   security_role?: string;
   title: string;
   initial_content?: string;
@@ -275,16 +380,31 @@ export function createLobby(params: {
     );
   }
 
-  const lobbyCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const lobbyCode = generateDistinctSixDigitCode();
+  const adminOtp = generateDistinctSixDigitCode([lobbyCode]);
+  const managerJoinCode = generateDistinctSixDigitCode([lobbyCode, adminOtp]);
+
   const draft = params.initial_content || '';
-  const guidelines =
-    params.brand_guidelines ||
-    '1. Avoid unverified superlative or medical cure claims.\n2. Cite clinical sample sizes and mandatory disclaimers.';
+  const guidelines = params.brand_guidelines || '';
   const now = new Date().toISOString();
+  const expiresAt = Date.now() + ADMIN_OTP_TTL_MS;
+  const otpRecipient = (params.recipient_email || params.manager_email || '').trim();
+
+  if (otpRecipient) {
+    sendOtpEmail(otpRecipient, adminOtp, `${params.title || 'Lobby'} (15-Min Admin OTP)`).catch(
+      () => {}
+    );
+  }
 
   const lobby: ReviewLobby = {
     lobby_code: lobbyCode,
     room_code: lobbyCode,
+    admin_otp: adminOtp,
+    admin_otp_created_at: now,
+    admin_otp_expires_at: expiresAt,
+    admin_otp_recipient: otpRecipient,
+    manager_join_code: managerJoinCode,
+    join_requests: [],
     title: params.title || 'Brand Governance Review Session',
     created_by: params.manager_name
       ? `${params.manager_name} (${params.manager_email})`
@@ -325,7 +445,164 @@ export function createLobby(params: {
   return lobby;
 }
 
-// Employee/Creator or Creator Admin joins an existing lobby
+// Regenerate a fresh 15-minute self-destructing Admin OTP and send via mail
+export function regenerateAdminOtp(params: {
+  lobby_code: string;
+  user_id?: string;
+  email?: string;
+  recipient_email?: string;
+}): ReviewLobby {
+  sanitizeLobbies();
+  const lobby = lobbies.get(params.lobby_code.trim());
+  if (!lobby) {
+    throw new Error(`Lobby "${params.lobby_code}" not found.`);
+  }
+  if (!isRoomCreator(lobby, params.user_id, params.email)) {
+    throw new Error('Only the Admin who created this lobby can generate or email its 15-minute OTP.');
+  }
+
+  const newOtp = generateDistinctSixDigitCode([lobby.room_code, lobby.manager_join_code]);
+  const now = new Date().toISOString();
+  const expiresAt = Date.now() + ADMIN_OTP_TTL_MS;
+  const targetEmail = (params.recipient_email || lobby.created_by_email || params.email || '').trim();
+
+  lobby.admin_otp = newOtp;
+  lobby.admin_otp_created_at = now;
+  lobby.admin_otp_expires_at = expiresAt;
+  lobby.admin_otp_recipient = targetEmail;
+
+  if (targetEmail) {
+    sendOtpEmail(targetEmail, newOtp, `${lobby.title} (15-Min Self-Destructing OTP)`).catch(
+      () => {}
+    );
+  }
+
+  saveLobbiesToDisk();
+  return lobby;
+}
+
+// Creator requests the Admin for a different Lobby Joining Code / permission to join
+export function requestLobbyJoinCode(params: {
+  lobby_code: string;
+  user_id: string;
+  name?: string;
+  email: string;
+  role: UserRole;
+  note?: string;
+}): { lobby: ReviewLobby; request: LobbyJoinRequest } {
+  sanitizeLobbies();
+  const lobby = lobbies.get(params.lobby_code.trim());
+  if (!lobby) {
+    throw new Error(`Lobby "${params.lobby_code}" not found.`);
+  }
+  if (lobby.permission_granted === false || lobby.status === 'closed') {
+    throw new Error('This lobby is currently suspended or closed.');
+  }
+
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  const existingReq = lobby.join_requests.find(
+    (r) =>
+      (Boolean(params.user_id) && r.user_id === params.user_id) ||
+      (Boolean(cleanEmail) && r.email.toLowerCase() === cleanEmail)
+  );
+
+  if (existingReq) {
+    existingReq.status = 'pending';
+    existingReq.note = params.note || existingReq.note;
+    existingReq.requested_at = new Date().toISOString();
+    if (!existingReq.requested_join_code) {
+      existingReq.requested_join_code = lobby.manager_join_code;
+    }
+    saveLobbiesToDisk();
+    return { lobby, request: existingReq };
+  }
+
+  // Generate a distinct joining code for this request (or bind to manager_join_code) shown ONLY to the Manager/Admin
+  const distinctJoinCode = generateDistinctSixDigitCode([
+    lobby.room_code,
+    lobby.admin_otp,
+    lobby.manager_join_code,
+  ]);
+
+  const newReq: LobbyJoinRequest = {
+    id: `jreq_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+    user_id: params.user_id,
+    name: params.name || params.email,
+    email: params.email,
+    role: params.role,
+    note: params.note,
+    requested_join_code: distinctJoinCode,
+    status: 'pending',
+    requested_at: new Date().toISOString(),
+  };
+
+  lobby.join_requests.push(newReq);
+  saveLobbiesToDisk();
+  return { lobby, request: newReq };
+}
+
+// Admin who created the lobby accepts or declines a Creator's join request
+export function resolveLobbyJoinRequest(params: {
+  lobby_code: string;
+  request_id: string;
+  admin_user_id?: string;
+  admin_email?: string;
+  approve: boolean;
+}): { lobby: ReviewLobby; request: LobbyJoinRequest } {
+  sanitizeLobbies();
+  const lobby = lobbies.get(params.lobby_code.trim());
+  if (!lobby) {
+    throw new Error(`Lobby "${params.lobby_code}" not found.`);
+  }
+  if (!isRoomCreator(lobby, params.admin_user_id, params.admin_email)) {
+    throw new Error('Only the Admin who created this lobby can accept or decline join requests.');
+  }
+
+  const reqItem = lobby.join_requests.find((r) => r.id === params.request_id);
+  if (!reqItem) {
+    throw new Error('Join request not found.');
+  }
+
+  reqItem.status = params.approve ? 'accepted' : 'declined';
+  reqItem.resolved_at = new Date().toISOString();
+
+  if (params.approve) {
+    // Upon accepting the request from the creator, add them to participants so they can either:
+    // 1. Open the room directly (accepted by the Admin who created the lobby)
+    // 2. Or join through the manager's joining code (`manager_join_code` / `requested_join_code`)
+    const alreadyParticipant = lobby.participants.some(
+      (p) =>
+        (Boolean(reqItem.user_id) && p.user_id === reqItem.user_id) ||
+        (Boolean(reqItem.email) && p.email.toLowerCase() === reqItem.email.toLowerCase())
+    );
+    if (!alreadyParticipant) {
+      lobby.participants.push({
+        user_id: reqItem.user_id,
+        name: reqItem.name || reqItem.email,
+        email: reqItem.email,
+        role: reqItem.role || 'content_creator',
+        joined_at: new Date().toISOString(),
+      });
+    }
+
+    lobby.notes.push({
+      id: `note-${Date.now()}`,
+      author_name: lobby.created_by,
+      author_role: 'manager',
+      text: `Admin accepted join request from ${reqItem.name} (${reqItem.email}).`,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  saveLobbiesToDisk();
+  return { lobby, request: reqItem };
+}
+
+// Employee/Creator or Creator Admin joins an existing lobby via:
+// - Manager's Lobby Joining Code (`manager_join_code`)
+// - Creator's Accepted Request Joining Code (`requested_join_code`)
+// - Admin's 15-minute self-destructing OTP (`admin_otp`, if not expired)
+// - Room Code (if already accepted by Admin or is the Room Creator)
 export function joinLobby(params: {
   lobby_code: string;
   user_id: string;
@@ -341,9 +618,42 @@ export function joinLobby(params: {
     );
   }
 
-  const lobby = lobbies.get(params.lobby_code.trim());
+  const enteredCode = params.lobby_code.trim();
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+
+  // Find lobby by room_code, manager_join_code, admin_otp, or a join request's requested_join_code
+  let lobby: ReviewLobby | undefined = lobbies.get(enteredCode);
+  let matchedBy: 'room_code' | 'manager_join_code' | 'request_join_code' | 'admin_otp' =
+    'room_code';
+
   if (!lobby) {
-    throw new Error(`Review lobby code "${params.lobby_code}" does not exist.`);
+    for (const candidate of lobbies.values()) {
+      if (candidate.manager_join_code === enteredCode) {
+        lobby = candidate;
+        matchedBy = 'manager_join_code';
+        break;
+      }
+      if (candidate.admin_otp && candidate.admin_otp === enteredCode) {
+        lobby = candidate;
+        matchedBy = 'admin_otp';
+        break;
+      }
+      if (
+        (candidate.join_requests || []).some(
+          (r) => r.requested_join_code === enteredCode && r.status === 'accepted'
+        )
+      ) {
+        lobby = candidate;
+        matchedBy = 'request_join_code';
+        break;
+      }
+    }
+  }
+
+  if (!lobby) {
+    throw new Error(
+      `Invalid or expired Lobby Joining Code "${enteredCode}". Ask the room Admin for the active Lobby Joining Code or request access.`
+    );
   }
 
   if (lobby.permission_granted === false || lobby.status === 'closed') {
@@ -352,23 +662,51 @@ export function joinLobby(params: {
     );
   }
 
+  const creator = isRoomCreator(lobby, params.user_id, params.email);
+
   // If the user is an Admin, they can ONLY access rooms created by themselves
+  if ((params.security_role || '').toUpperCase() === 'ADMIN' && !creator) {
+    throw new Error('Admins can only access lobby rooms created by themselves.');
+  }
+
+  // Check if 15-min Admin OTP expired
+  if (matchedBy === 'admin_otp') {
+    if (
+      typeof lobby.admin_otp_expires_at === 'number' &&
+      Date.now() > lobby.admin_otp_expires_at
+    ) {
+      lobby.admin_otp = null;
+      saveLobbiesToDisk();
+      throw new Error(
+        'This 15-minute Admin OTP has self-destructed. Please generate a new OTP or use the Manager Lobby Joining Code.'
+      );
+    }
+  }
+
+  // If joining by room_code (e.g., clicking "Open Room"), verify the user is either the creator, already a participant, or has an accepted join request
+  const isParticipant = lobby.participants.some(
+    (p) =>
+      (Boolean(params.user_id) && p.user_id === params.user_id) ||
+      (Boolean(cleanEmail) && p.email.toLowerCase() === cleanEmail)
+  );
+  const myJoinReq = (lobby.join_requests || []).find(
+    (r) =>
+      (Boolean(params.user_id) && r.user_id === params.user_id) ||
+      (Boolean(cleanEmail) && r.email.toLowerCase() === cleanEmail)
+  );
+
   if (
-    (params.security_role || '').toUpperCase() === 'ADMIN' &&
-    !isRoomCreator(lobby, params.user_id, params.email)
+    matchedBy === 'room_code' &&
+    !creator &&
+    !isParticipant &&
+    myJoinReq?.status !== 'accepted'
   ) {
     throw new Error(
-      'Admins can only access lobby rooms created by themselves.'
+      'To join this room, please request access from the Admin or enter the Manager-Only Lobby Joining Code.'
     );
   }
 
-  if (
-    !lobby.participants.some(
-      (p) =>
-        p.user_id === params.user_id ||
-        (Boolean(params.email) && p.email.toLowerCase() === params.email.toLowerCase())
-    )
-  ) {
+  if (!isParticipant) {
     lobby.participants.push({
       user_id: params.user_id,
       name: params.name || params.email,
@@ -376,6 +714,10 @@ export function joinLobby(params: {
       role: params.role,
       joined_at: new Date().toISOString(),
     });
+    if (myJoinReq && myJoinReq.status !== 'accepted') {
+      myJoinReq.status = 'accepted';
+      myJoinReq.resolved_at = new Date().toISOString();
+    }
     saveLobbiesToDisk();
   }
 

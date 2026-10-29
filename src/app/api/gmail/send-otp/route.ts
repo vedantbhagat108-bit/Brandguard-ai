@@ -110,18 +110,21 @@ export async function POST(req: NextRequest) {
 
         <div style="background: #f1f5f9; border: 1px dashed #94a3b8; border-radius: 12px; padding: 18px; text-align: center; margin: 20px 0;">
           <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.12em; color: #64748b;">
-            ${otpType === "step_up_otp" ? "6-Digit Verification OTP" : "Confidential 6-Digit Lobby OTP / PIN"}
+            ${otpType === "step_up_otp" ? "6-Digit Verification OTP (Self-Destructs in 15 Min)" : "Confidential 6-Digit OTP (Self-Destructs in 15 Minutes)"}
           </div>
           <div style="margin-top: 8px; font-family: 'Courier New', monospace; font-size: 30px; font-weight: 800; letter-spacing: 0.25em; color: #0f172a;">
             ${roomCode}
+          </div>
+          <div style="margin-top: 6px; font-size: 11px; color: #e11d48; font-weight: 600;">
+            ⏱ Self-destructs automatically in 15 minutes
           </div>
         </div>
 
         <p style="margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: #475569;">
           ${
             otpType === "step_up_otp"
-              ? "Enter this 6-digit OTP in the Step-Up Verification bar inside BrandLens AI to elevate your session."
-              : "Open the Collaborative Review Lobby in BrandLens AI and enter this 6-digit code in the 'Enter Room PIN / Code' box to join the live session."
+              ? "Enter this 6-digit OTP in BrandLens AI within 15 minutes before it self-destructs."
+              : "This 6-digit OTP is valid for 15 minutes and will automatically self-destruct after expiration."
           }
         </p>
 

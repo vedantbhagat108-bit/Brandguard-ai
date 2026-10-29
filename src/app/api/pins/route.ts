@@ -5,6 +5,7 @@ import { pinIpLimiter, RateLimitError } from '@/backend/rateLimiter.ts';
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
+  securityDB.loadFromDisk();
   const { searchParams } = new URL(req.url);
   const brandId = searchParams.get('brand_id');
 
@@ -49,9 +50,13 @@ export async function GET(req: NextRequest) {
     brand_name: u.brand_name || securityDB.workspaces.get(u.brand_id)?.name || 'Default Workspace',
     department: u.department,
     is_approved: u.is_approved,
-    lobby_access: typeof u.lobby_access === 'boolean' ? u.lobby_access : Boolean(u.is_approved),
+    lobby_access: typeof u.lobby_access === 'boolean' ? u.lobby_access : true,
     created_at: u.created_at,
     password_updated_at: u.password_updated_at || null,
+    requested_role: u.requested_role || null,
+    role_request_status: u.role_request_status || null,
+    role_request_note: u.role_request_note || null,
+    role_request_at: u.role_request_at || null,
   }));
 
   if (brandId) {

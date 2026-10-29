@@ -206,7 +206,7 @@ function AnalysisDialog({
       open={open}
       onClose={() => undefined}
       title="Running your compliance review"
-      description="Aurelia Skin · Approved knowledge v2.4 · 10 rules"
+      description="Two-RAG Governance Engine · Grounded in your uploaded Brand Knowledge"
       size="md"
       icon={
         <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-50 text-brand-600">
@@ -225,7 +225,7 @@ function AnalysisDialog({
             {title.trim() || "Untitled draft"}
           </p>
           <p className="mt-0.5 text-[11px] text-ink-400">
-            Local mock engine · your content stays in this browser
+            Checking claims against your Brand Knowledge repository
           </p>
         </div>
         <span className="ml-auto text-[11px] font-semibold tabular-nums text-brand-600">
@@ -396,6 +396,25 @@ export default function SubmitPage() {
     size: number;
   } | null>(null);
   const knowledgeFileInputRef = useRef<HTMLInputElement>(null);
+  const [ingestedDocs, setIngestedDocs] = useState<
+    Array<{ document_name: string; chunks_count: number; doc_type: string }>
+  >([]);
+
+  const refreshIngestedDocs = async () => {
+    try {
+      const res = await fetch("/api/ingest", { cache: "no-store" });
+      if (res.ok) {
+        const data = await res.json();
+        setIngestedDocs(Array.isArray(data.documents) ? data.documents : []);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    void refreshIngestedDocs();
+  }, []);
 
   async function processKnowledgeFile(file: File) {
     setKnowledgeError(null);
@@ -451,14 +470,30 @@ export default function SubmitPage() {
         size: file.size,
         pages: json.pages,
       });
+
+      // Immediately persist into the Brand Knowledge repository (/api/ingest) so it reflects across /policies and /lobby
+      if (json.text && json.text.trim().length >= 20) {
+        await fetch("/api/ingest", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            document_name: json.fileName || file.name,
+            text: json.text.trim(),
+            doc_type: "style_rule",
+            department: "marketing",
+          }),
+        });
+        await refreshIngestedDocs();
+      }
+
       setKnowledgeUploadProgress(100);
       setKnowledgeUploadStage("complete");
       setKnowledgeUploadLabel(
-        `Upload & extraction complete · ${json.text.length.toLocaleString()} chars extracted`,
+        `Synced to Brand Knowledge Repository · ${json.text.length.toLocaleString()} chars indexed`,
       );
       toast({
-        title: "Brand knowledge loaded",
-        description: `Extracted ${json.text.length.toLocaleString()} characters from ${file.name}.`,
+        title: "Brand knowledge uploaded & synced",
+        description: `Indexed ${file.name} (${json.text.length.toLocaleString()} chars) across Brand Knowledge, Reviews & Lobby.`,
         variant: "success",
       });
     } catch (e: any) {
@@ -822,7 +857,7 @@ export default function SubmitPage() {
                       }));
                     }
                   }}
-                  placeholder="e.g. Glow Renewal Serum — Instagram launch"
+                  placeholder="e.g. Q3 Product Launch Copy Review"
                   maxLength={120}
                   aria-invalid={Boolean(errors.title)}
                   aria-describedby={errors.title ? "review-title-error" : "review-title-hint"}
@@ -1089,22 +1124,64 @@ export default function SubmitPage() {
                       <span>{knowledgeText.length} characters</span>
                       <button
                         type="button"
-                        onClick={() => {
-                          setKnowledgeText(
-                            `Enterprise Brand Style Guidelines 2026:
-- Always capitalize Aurelia Skin brand name.
-- Tone must be empowering, calm, clinical, and transparent.
-- Never use superlatives like "#1", "miracle", or "revolutionary".
-- All clinical trial percentages must cite the official study ID.
-- Sponsored posts must include "#ad" or "#sponsored" in the first 125 characters.`
-                          );
-                          toast({ title: "Default rules loaded", variant: "info" });
+                        onClick={async () => {
+                          if (knowledgeText.trim().length < 20) {
+                            toast({
+                              title: "Add at least 20 characters",
+                              description: "Enter brand guidelines or facts before saving.",
+                              variant: "error",
+                            });
+                            return;
+                          }
+                          const res = await fetch("/api/ingest", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              document_name: `${(title || "Custom_Brand_Rules").replace(/\s+/g, "_")}.md`,
+                              text: knowledgeText.trim(),
+                              doc_type: "style_rule",
+                              department: "marketing",
+                            }),
+                          });
+                          if (res.ok) {
+                            await refreshIngestedDocs();
+                            toast({
+                              title: "Saved to Brand Knowledge",
+                              description: "Pasted rules are now synced across Brand Knowledge, Reviews & Lobby.",
+                              variant: "success",
+                            });
+                          }
                         }}
                         className="font-semibold text-purple-800 hover:underline cursor-pointer"
                       >
-                        Load standard brand template
+                        Save pasted rules to Brand Knowledge repository
                       </button>
                     </div>
+                  </div>
+                )}
+
+                {ingestedDocs.length > 0 && (
+                  <div className="rounded-xl border border-purple-200 bg-white/90 px-3 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
+                      <span className="font-semibold text-purple-950">
+                        Active Brand Knowledge Docs ({ingestedDocs.length}):
+                      </span>
+                      {ingestedDocs.map((d) => (
+                        <span
+                          key={d.document_name}
+                          className="rounded-md bg-purple-100 px-2 py-0.5 font-mono text-[10px] font-semibold text-purple-900"
+                        >
+                          {d.document_name} ({d.chunks_count} passages)
+                        </span>
+                      ))}
+                    </div>
+                    <Link
+                      href="/policies"
+                      className="text-[11px] font-semibold text-purple-700 hover:underline"
+                    >
+                      Manage in Brand Knowledge &rarr;
+                    </Link>
                   </div>
                 )}
               </div>
@@ -1421,8 +1498,7 @@ export default function SubmitPage() {
               <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <p className="flex items-center gap-1.5 text-[10px] leading-relaxed text-ink-400">
                   <LockKeyhole className="h-3 w-3 shrink-0" aria-hidden="true" />
-                  Demo data is saved in this browser only. No live AI provider is
-                  called.
+                  Reviews are saved to your workspace database and checked against your uploaded Brand Knowledge.
                 </p>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Link
@@ -1449,7 +1525,7 @@ export default function SubmitPage() {
           <Card className="overflow-hidden">
             <CardHeader
               title="What we check"
-              description="10 approved rules applied to this draft."
+              description="Evaluated against your uploaded Brand Knowledge documents."
               icon={
                 <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-50 text-brand-600">
                   <ShieldCheck className="h-4 w-4" aria-hidden="true" />
@@ -1481,9 +1557,16 @@ export default function SubmitPage() {
                 );
               })}
             </div>
-            <div className="flex items-center gap-2 border-t border-line bg-ink-50/50 px-5 py-3 text-[10px] text-ink-400">
-              <BookOpen className="h-3 w-3" aria-hidden="true" />
-              Aurelia Skin knowledge v2.4 · updated 12 Oct 2026
+            <div className="flex items-center justify-between gap-2 border-t border-line bg-ink-50/50 px-5 py-3 text-[10px] text-ink-500">
+              <span className="flex items-center gap-1.5">
+                <BookOpen className="h-3 w-3 text-purple-600" aria-hidden="true" />
+                {ingestedDocs.length > 0
+                  ? `${ingestedDocs.length} Brand Knowledge doc(s) active`
+                  : "No Brand Knowledge docs uploaded yet"}
+              </span>
+              <Link href="/policies" className="font-semibold text-brand-600 hover:underline">
+                View Library
+              </Link>
             </div>
           </Card>
 
@@ -1493,7 +1576,7 @@ export default function SubmitPage() {
               {[
                 {
                   title: "Findings are cited",
-                  text: "Each issue links to the exact approved passage, or becomes a knowledge gap.",
+                  text: "Each issue links to the exact passage from your uploaded Brand Knowledge, or becomes a knowledge gap.",
                 },
                 {
                   title: "You stay in control",
@@ -1520,34 +1603,6 @@ export default function SubmitPage() {
               ))}
             </CardBody>
           </Card>
-
-          <div className="relative overflow-hidden rounded-2xl bg-ink-950 p-5 text-white shadow-lift">
-            <div className="demo-grid absolute inset-0 opacity-50" aria-hidden="true" />
-            <div
-              className="absolute -right-8 -top-10 h-32 w-32 rounded-full bg-brand-500/25 blur-2xl"
-              aria-hidden="true"
-            />
-            <div className="relative">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-mint-300/20 bg-mint-300/10 px-2 py-1 text-[9px] font-bold uppercase tracking-[0.12em] text-mint-200">
-                <Sparkles className="h-3 w-3" aria-hidden="true" />
-                Local demo engine
-              </span>
-              <p className="mt-3 text-[13px] font-semibold">
-                No API key, no external AI call
-              </p>
-              <p className="mt-1.5 text-[11px] leading-relaxed text-white/50">
-                The mock engine uses deterministic claim patterns and the
-                synthetic Aurelia knowledge base. It demonstrates the workflow,
-                not production model accuracy.
-              </p>
-              <DemoGuideTrigger
-                variant="secondary"
-                size="sm"
-                className="mt-3 border-white/15 bg-white/[0.06] text-white shadow-none hover:border-white/25 hover:bg-white/[0.11]"
-                label="Demo walkthrough"
-              />
-            </div>
-          </div>
         </aside>
       </div>
 

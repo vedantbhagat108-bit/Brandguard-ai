@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
-  listLobbies,
   listLobbiesForUser,
   getLobby,
   createLobby,
@@ -9,6 +8,10 @@ import {
   discardLobby,
   setLobbyPermission,
   isSuperAdminUser,
+  regenerateAdminOtp,
+  requestLobbyJoinCode,
+  resolveLobbyJoinRequest,
+  requestOtp,
 } from '@/backend/lobby.ts';
 import { securityDB } from '@/backend/database.ts';
 import { UserRole } from '@/backend/types.ts';
@@ -60,6 +63,7 @@ export async function POST(req: NextRequest) {
       author_name,
       manager_name,
       email = '',
+      recipient_email,
       role,
       security_role,
       creator_role,
@@ -70,6 +74,8 @@ export async function POST(req: NextRequest) {
       text,
       score,
       permission_granted,
+      request_id,
+      approve,
     } = body;
 
     const targetCode = (room_code || lobby_code || '').trim();
@@ -84,6 +90,7 @@ export async function POST(req: NextRequest) {
         ? 'authorised_reviewer'
         : 'content_creator';
 
+    securityDB.loadFromDisk();
     const dbUser =
       securityDB.findUserByIdOrIdentifier(actorId) ||
       securityDB.findUserByIdOrIdentifier(email);
@@ -160,11 +167,119 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         {
           error:
-            'Your Lobby access permission has been revoked. Please ask the Super Admin or your Admin to grant Lobby permission.',
+            'Your Lobby access permission has been revoked. Please ask the Super Admin to grant Lobby permission.',
           detail: 'Lobby access permission has been revoked.',
         },
         { status: 403 }
       );
+    }
+
+    // Admin requests or regenerates a 15-minute self-destructing OTP via mail
+    if (action === 'send_admin_otp') {
+      const targetEmail = (recipient_email || email || '').trim();
+      if (!targetEmail) {
+        return NextResponse.json(
+          { error: 'Recipient email is required to send the 15-minute OTP.' },
+          { status: 400 }
+        );
+      }
+      if (targetCode) {
+        const updatedLobby = regenerateAdminOtp({
+          lobby_code: targetCode,
+          user_id: actorId,
+          email,
+          recipient_email: targetEmail,
+        });
+        return NextResponse.json({
+          ok: true,
+          otp: updatedLobby.admin_otp,
+          expires_at: updatedLobby.admin_otp_expires_at,
+          recipient: targetEmail,
+          lobby: updatedLobby,
+          message: `15-minute self-destructing OTP sent to ${targetEmail}.`,
+        });
+      } else {
+        const otpRes = requestOtp(targetEmail, 'manager');
+        return NextResponse.json({
+          ok: true,
+          otp: otpRes.dev_otp,
+          expires_at: otpRes.expires_at,
+          recipient: targetEmail,
+          message: otpRes.message,
+        });
+      }
+    }
+
+    // Creator requests a different Lobby Joining Code from the Admin who created the lobby
+    if (action === 'request_join') {
+      if (!targetCode) {
+        return NextResponse.json(
+          { error: 'room_code is required to request lobby access.' },
+          { status: 400 }
+        );
+      }
+      const { lobby, request } = requestLobbyJoinCode({
+        lobby_code: targetCode,
+        user_id: actorId,
+        name: actorName,
+        email,
+        role: normalizedRole,
+        note: note || text,
+      });
+
+      securityDB.logAudit({
+        brand_id: 'b0000001-0000-4000-8000-000000000001',
+        user_id: actorId,
+        user_email: email,
+        action: 'LOBBY_ACCESS_UPDATED',
+        details: {
+          summary: `${actorName} (${email}) requested Lobby Joining Code for "${lobby.title}"`,
+          room_code: targetCode,
+        },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        message: `Join request sent to Admin (${lobby.created_by}). Once the Admin accepts your request, you can enter directly or join via the Manager's Joining Code.`,
+        request_status: request.status,
+      });
+    }
+
+    // Admin who created the lobby accepts or declines a Creator's join request
+    if (action === 'resolve_join_request') {
+      if (!targetCode || !request_id) {
+        return NextResponse.json(
+          { error: 'room_code and request_id are required.' },
+          { status: 400 }
+        );
+      }
+      const { lobby, request } = resolveLobbyJoinRequest({
+        lobby_code: targetCode,
+        request_id: String(request_id),
+        admin_user_id: actorId,
+        admin_email: email,
+        approve: Boolean(approve),
+      });
+
+      securityDB.logAudit({
+        brand_id: 'b0000001-0000-4000-8000-000000000001',
+        user_id: actorId,
+        user_email: email,
+        action: 'LOBBY_ACCESS_UPDATED',
+        details: {
+          summary: `Room Admin ${approve ? 'accepted' : 'declined'} join request from ${request.email} for "${lobby.title}"`,
+          room_code: targetCode,
+        },
+      });
+
+      return NextResponse.json({
+        ok: true,
+        lobby,
+        request,
+        message: approve
+          ? `Accepted ${request.name} (${request.email}). They can now enter the room directly or join using Joining Code #${request.requested_join_code || lobby.manager_join_code}.`
+          : `Declined join request from ${request.name}.`,
+      });
     }
 
     if (action === 'create') {
@@ -172,6 +287,7 @@ export async function POST(req: NextRequest) {
         manager_id: actorId,
         manager_name: actorName,
         manager_email: email,
+        recipient_email: recipient_email || email,
         security_role: effectiveSecurityRole,
         title: title || 'Collaborative Governance Session',
         initial_content: content_draft ?? initial_content,
@@ -197,27 +313,13 @@ export async function POST(req: NextRequest) {
     if (action === 'join') {
       if (!targetCode) {
         return NextResponse.json(
-          { error: 'Room code is required to join.', detail: 'room_code is required.' },
+          { error: 'Lobby Joining Code is required to join.', detail: 'room_code is required.' },
           { status: 400 }
         );
       }
 
-      let codeToJoin = targetCode;
-      const existingLobby = getLobby(targetCode) || getLobby(targetCode.toUpperCase());
-      if (!existingLobby) {
-        const matchedPin = securityDB.pins.get(targetCode.toUpperCase());
-        if (matchedPin && !matchedPin.is_used) {
-          const allLobbies = listLobbies();
-          if (allLobbies.length > 0) {
-            codeToJoin = allLobbies[0].room_code;
-          }
-        }
-      } else {
-        codeToJoin = existingLobby.room_code;
-      }
-
       const lobby = joinLobby({
-        lobby_code: codeToJoin,
+        lobby_code: targetCode,
         user_id: actorId,
         name: actorName,
         email,
@@ -230,7 +332,7 @@ export async function POST(req: NextRequest) {
         user_id: actorId,
         user_email: email,
         action: 'LOBBY_JOINED',
-        details: { room_code: codeToJoin, participant: actorName, role: normalizedRole },
+        details: { room_code: lobby.room_code, participant: actorName, role: normalizedRole },
       });
 
       return NextResponse.json(lobby);
