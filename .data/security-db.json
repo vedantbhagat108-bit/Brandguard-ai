@@ -35,6 +35,24 @@
         "brand_name": "Test Workspace",
         "created_at": "2026-10-29T22:15:02.315Z"
       }
+    ],
+    [
+      "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+      {
+        "id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+        "name": "Test SST",
+        "brand_name": "Test SST",
+        "created_at": "2026-10-30T09:34:42.919Z"
+      }
+    ],
+    [
+      "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+      {
+        "id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+        "name": "Verify WS",
+        "brand_name": "Verify WS",
+        "created_at": "2026-10-30T09:36:45.490Z"
+      }
     ]
   ],
   "users": [
@@ -90,6 +108,78 @@
         "requested_role": null,
         "role_request_status": "approved"
       }
+    ],
+    [
+      "u_demo_creator",
+      {
+        "id": "u_demo_creator",
+        "username": "democreator",
+        "email": "demo@gmail.com",
+        "hashed_password": "10475d83089b6d8c9a8c641b2e5724c5c4993a01dfde3932fb3391bd47b43f3a",
+        "role": "CREATOR",
+        "brand_id": "b0000001-0000-4000-8000-000000000001",
+        "brand_name": "Default Workspace",
+        "name": "Demo Creator",
+        "department": "Marketing",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-30T09:34:23.847Z"
+      }
+    ],
+    [
+      "u_demo_admin",
+      {
+        "id": "u_demo_admin",
+        "username": "demoadmin",
+        "email": "demoadmin@gmail.com",
+        "hashed_password": "10475d83089b6d8c9a8c641b2e5724c5c4993a01dfde3932fb3391bd47b43f3a",
+        "role": "ADMIN",
+        "brand_id": "b0000001-0000-4000-8000-000000000001",
+        "brand_name": "Default Workspace",
+        "name": "Demo Admin",
+        "department": "Compliance",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-30T09:34:23.847Z"
+      }
+    ],
+    [
+      "5d683340-8c12-49bb-bcfc-b771192c1cfe",
+      {
+        "id": "5d683340-8c12-49bb-bcfc-b771192c1cfe",
+        "username": "ssttest_1793352881962",
+        "email": "ssttest_1793352881962@test.com",
+        "hashed_password": "10475d83089b6d8c9a8c641b2e5724c5c4993a01dfde3932fb3391bd47b43f3a",
+        "role": "ADMIN",
+        "brand_id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+        "brand_name": "Test SST",
+        "name": "Ssttest 1793352881962",
+        "department": "Marketing",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-30T09:34:42.920Z",
+        "requested_role": null,
+        "role_request_status": "approved"
+      }
+    ],
+    [
+      "1ca98825-7c1e-427c-b2b4-0527cc5465c8",
+      {
+        "id": "1ca98825-7c1e-427c-b2b4-0527cc5465c8",
+        "username": "verify_1793353004385",
+        "email": "verify_1793353004385@test.com",
+        "hashed_password": "10475d83089b6d8c9a8c641b2e5724c5c4993a01dfde3932fb3391bd47b43f3a",
+        "role": "REVIEWER",
+        "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+        "brand_name": "Verify WS",
+        "name": "Verify 1793353004385",
+        "department": "Marketing",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-30T09:36:45.492Z",
+        "requested_role": null,
+        "role_request_status": "approved"
+      }
     ]
   ],
   "pins": [
@@ -113,6 +203,166 @@
   "guidelines": [],
   "submissions": [],
   "auditLogs": [
+    {
+      "id": "5d32fd68-eb68-47f2-a4c0-08878bc6aff5",
+      "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+      "user_id": "u_super_admin",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "verify_1793353004385@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: verify_1793353004385@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-30T09:36:45.912Z"
+    },
+    {
+      "id": "edccffb8-7ac9-4293-90c6-3ad23fad9417",
+      "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+      "user_id": "u_super_admin",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "target_user": "verify_1793353004385@test.com",
+        "username": "verify_1793353004385",
+        "previous_role": "CREATOR",
+        "new_role": "REVIEWER",
+        "updated_by": "Super Admin"
+      },
+      "details_text": "target_user: verify_1793353004385@test.com · username: verify_1793353004385 · previous_role: CREATOR · new_role: REVIEWER · updated_by: Super Admin",
+      "timestamp": "2026-10-30T09:36:45.911Z"
+    },
+    {
+      "id": "a59a473a-8364-45a9-9c20-5d9fc87de789",
+      "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+      "user_id": "1ca98825-7c1e-427c-b2b4-0527cc5465c8",
+      "user_email": "verify_1793353004385@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "USER_REGISTERED",
+      "details": {
+        "username": "verify_1793353004385",
+        "email": "verify_1793353004385@test.com",
+        "role": "CREATOR",
+        "redeemed_pin": "Direct Account Signup",
+        "brand": "Verify WS"
+      },
+      "details_text": "username: verify_1793353004385 · email: verify_1793353004385@test.com · role: CREATOR · redeemed_pin: Direct Account Signup · brand: Verify WS",
+      "timestamp": "2026-10-30T09:36:45.497Z"
+    },
+    {
+      "id": "9ce0d3e8-02b2-4c48-82f2-5ebae8b1e4e9",
+      "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "LOBBY_ACCESS_UPDATED",
+      "details": {
+        "target_user": "verify_1793353004385@test.com",
+        "username": "verify_1793353004385",
+        "lobby_rights": "GRANTED",
+        "updated_by": "system"
+      },
+      "details_text": "target_user: verify_1793353004385@test.com · username: verify_1793353004385 · lobby_rights: GRANTED · updated_by: system",
+      "timestamp": "2026-10-30T09:36:45.495Z"
+    },
+    {
+      "id": "0ab51b06-dc46-4691-be03-0cc70095b333",
+      "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "verify_1793353004385@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: verify_1793353004385@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-30T09:36:45.494Z"
+    },
+    {
+      "id": "d11ab0db-0892-4b11-8d69-865c4a5a0fa9",
+      "brand_id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+      "user_id": "u_super_admin",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "ssttest_1793352881962@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: ssttest_1793352881962@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-30T09:34:43.139Z"
+    },
+    {
+      "id": "ee41ab49-a11a-48c8-9503-ef967cb2b765",
+      "brand_id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+      "user_id": "u_super_admin",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "target_user": "ssttest_1793352881962@test.com",
+        "username": "ssttest_1793352881962",
+        "previous_role": "CREATOR",
+        "new_role": "ADMIN",
+        "updated_by": "Super Admin"
+      },
+      "details_text": "target_user: ssttest_1793352881962@test.com · username: ssttest_1793352881962 · previous_role: CREATOR · new_role: ADMIN · updated_by: Super Admin",
+      "timestamp": "2026-10-30T09:34:43.138Z"
+    },
+    {
+      "id": "01cf3b12-c6c6-41f2-905c-b77d38a3ef1a",
+      "brand_id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+      "user_id": "5d683340-8c12-49bb-bcfc-b771192c1cfe",
+      "user_email": "ssttest_1793352881962@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "USER_REGISTERED",
+      "details": {
+        "username": "ssttest_1793352881962",
+        "email": "ssttest_1793352881962@test.com",
+        "role": "CREATOR",
+        "redeemed_pin": "Direct Account Signup",
+        "brand": "Test SST"
+      },
+      "details_text": "username: ssttest_1793352881962 · email: ssttest_1793352881962@test.com · role: CREATOR · redeemed_pin: Direct Account Signup · brand: Test SST",
+      "timestamp": "2026-10-30T09:34:42.923Z"
+    },
+    {
+      "id": "857af978-5ad6-48f3-a403-495bc73eebb6",
+      "brand_id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "LOBBY_ACCESS_UPDATED",
+      "details": {
+        "target_user": "ssttest_1793352881962@test.com",
+        "username": "ssttest_1793352881962",
+        "lobby_rights": "GRANTED",
+        "updated_by": "system"
+      },
+      "details_text": "target_user: ssttest_1793352881962@test.com · username: ssttest_1793352881962 · lobby_rights: GRANTED · updated_by: system",
+      "timestamp": "2026-10-30T09:34:42.923Z"
+    },
+    {
+      "id": "c2a4ed8c-86a0-4dab-a067-c7a451fb98b0",
+      "brand_id": "ws_e4ebf2d3-d5ed-42a9-bc6b-91919c7ac19b",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "ssttest_1793352881962@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: ssttest_1793352881962@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-30T09:34:42.922Z"
+    },
     {
       "id": "ae5eca0e-ebb4-411d-972d-7b2cbe70e6bf",
       "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",

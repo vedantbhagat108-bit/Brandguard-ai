@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  Shield,
   ShieldCheck,
   X,
   KeyRound,
@@ -297,7 +298,7 @@ export function LoginModal() {
               </span>
               <span className="text-[11px] text-ink-500 font-medium">Instant Test Accounts</span>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
                 type="button"
                 disabled={submitting}
@@ -305,7 +306,16 @@ export function LoginModal() {
                 className="rounded-xl bg-purple-700 px-3 py-2 text-xs font-bold text-white hover:bg-purple-600 transition flex items-center justify-center gap-1.5 shadow-xs"
               >
                 <ShieldCheck className="h-3.5 w-3.5 text-mint-300" />
-                Sign in as Super Admin
+                Super Admin
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleDemoLogin("demoadmin@gmail.com", "password123")}
+                className="rounded-xl bg-blue-600 px-3 py-2 text-xs font-bold text-white hover:bg-blue-500 transition flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                <Shield className="h-3.5 w-3.5 text-mint-300" />
+                Workspace Admin
               </button>
               <button
                 type="button"
@@ -314,7 +324,7 @@ export function LoginModal() {
                 className="rounded-xl bg-brand-600 px-3 py-2 text-xs font-bold text-white hover:bg-brand-500 transition flex items-center justify-center gap-1.5 shadow-xs"
               >
                 <UserPlus className="h-3.5 w-3.5 text-mint-300" />
-                Sign in as Creator
+                Creator
               </button>
             </div>
           </div>

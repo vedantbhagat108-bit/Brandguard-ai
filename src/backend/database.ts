@@ -331,6 +331,31 @@ export class MultiTenantSecurityDB {
       };
       this.users.set(creatorUser.id, creatorUser);
     }
+
+    // Ensure demo workspace admin account exists (role: ADMIN, NOT SUPER_ADMIN)
+    const adminDeleted =
+      this.deletedUserEmails.has('demoadmin@gmail.com') ||
+      this.deletedUserEmails.has('demoadmin');
+    const existingAdmin =
+      this.findUserByEmail('demoadmin@gmail.com') ||
+      this.findUserByUsername('demoadmin');
+    if (!existingAdmin && !adminDeleted) {
+      const adminUser: DBUserRecord = {
+        id: 'u_demo_admin',
+        username: 'demoadmin',
+        email: 'demoadmin@gmail.com',
+        hashed_password: hashPassword('password123'),
+        role: 'ADMIN',
+        brand_id: defaultBrandId,
+        brand_name: defaultBrandName,
+        name: 'Demo Admin',
+        department: 'Compliance',
+        is_approved: true,
+        lobby_access: true,
+        created_at: now,
+      };
+      this.users.set(adminUser.id, adminUser);
+    }
   }
 
   public getOrCreateWorkspaceByName(
