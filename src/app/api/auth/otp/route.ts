@@ -23,11 +23,15 @@ export async function POST(req: NextRequest) {
     const cleanEmail = email.trim().toLowerCase();
 
     if (action === 'request') {
-      const result = requestOtp(cleanEmail, role);
-      return NextResponse.json({
-        ...result,
-        otp_code: result.dev_otp,
+      const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+      const bearerToken =
+        authHeader && authHeader.startsWith('Bearer ')
+          ? authHeader.slice(7).trim()
+          : null;
+      const result = await requestOtp(cleanEmail, role, {
+        googleAccessToken: body.google_access_token || bearerToken,
       });
+      return NextResponse.json(result);
     }
 
     if (action === 'verify') {

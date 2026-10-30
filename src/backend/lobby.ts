@@ -220,9 +220,26 @@ export function listLobbies(): ReviewLobby[] {
 }
 
 /**
+ * Strips the confidential 15-minute self-destructing `admin_otp` before sending any lobby object to the browser.
+ * The client only receives `admin_otp: null` and `admin_otp_active: boolean` + `admin_otp_expires_at` + `admin_otp_recipient`.
+ */
+export function sanitizeLobbyForClient(room: ReviewLobby): any {
+  const isOtpActive = Boolean(
+    room.admin_otp &&
+      typeof room.admin_otp_expires_at === 'number' &&
+      Date.now() < room.admin_otp_expires_at
+  );
+  return {
+    ...room,
+    admin_otp: null,
+    admin_otp_active: isOtpActive,
+  };
+}
+
+/**
  * Returns lobbies formatted for the requesting user:
  * - Super Admin sees all lobbies for governance, without secret codes.
- * - Regular Admin sees rooms created by themselves (including `manager_join_code`, `admin_otp`, and `join_requests`).
+ * - Regular Admin sees rooms created by themselves (including `manager_join_code` and `join_requests`, with `admin_otp` masked).
  * - Creators/Managers see rooms they have joined AND a directory of active rooms they can request to join (with `manager_join_code` and `admin_otp` hidden unless they are the room creator!).
  */
 export function listLobbiesForUser(params: {
@@ -247,15 +264,22 @@ export function listLobbiesForUser(params: {
     return all.map((room) => ({
       ...room,
       admin_otp: null,
+      admin_otp_active: Boolean(
+        room.admin_otp &&
+          typeof room.admin_otp_expires_at === 'number' &&
+          Date.now() < room.admin_otp_expires_at
+      ),
       manager_join_code: '••••••',
       shared_content: '',
       shared_content_draft: '',
     }));
   }
 
-  // Regular Admin sees ONLY lobbies created by themselves — with full access to manager_join_code, admin_otp, and join_requests
+  // Regular Admin sees ONLY lobbies created by themselves — with `admin_otp` masked (delivered via email only)
   if (secRole === 'ADMIN') {
-    return all.filter((room) => isRoomCreator(room, userId, email));
+    return all
+      .filter((room) => isRoomCreator(room, userId, email))
+      .map((room) => sanitizeLobbyForClient(room));
   }
 
   // Creators / Reviewers see all active lobbies in the workspace so they can either:
@@ -264,7 +288,7 @@ export function listLobbiesForUser(params: {
   // IMPORTANT: `manager_join_code` and `admin_otp` are strictly hidden from non-creators!
   return all.map((room) => {
     const isCreator = isRoomCreator(room, userId, email);
-    if (isCreator) return room;
+    if (isCreator) return sanitizeLobbyForClient(room);
 
     const isParticipant = (room.participants || []).some(
       (p) =>
@@ -282,6 +306,7 @@ export function listLobbiesForUser(params: {
       ...room,
       // Hide manager-only joining code & admin OTP from non-managers/creators
       admin_otp: null,
+      admin_otp_active: false,
       manager_join_code: undefined,
       // Only expose the user's own join request metadata (without revealing the manager-only code unless the manager shares it, or show status)
       my_join_request: myRequest
@@ -302,20 +327,102 @@ export function listLobbiesForUser(params: {
   });
 }
 
-// Generate 6-digit OTP (15 minutes expiry matching Database/email)
-export function requestOtp(email: string, role: UserRole = 'content_creator') {
+// Generate 6-digit OTP (15 minutes expiry matching Database/email) and deliver via email
+export async function requestOtp(
+  email: string,
+  role: UserRole = 'content_creator',
+  options?: {
+    googleAccessToken?: string | null;
+    senderName?: string;
+    senderEmail?: string;
+  }
+) {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   const expiresAt = Date.now() + ADMIN_OTP_TTL_MS;
   pendingOtps.set(email.toLowerCase(), { otp, expiresAt, role });
 
-  sendOtpEmail(email, otp, 'BrandLens AI (Self-Destructs in 15 Min)').catch(() => {});
+  const delivery = await sendOtpEmail(
+    email,
+    otp,
+    'BrandLens AI (Self-Destructs in 15 Min)',
+    options
+  );
 
   return {
     success: true,
-    message: `15-minute self-destructing OTP sent to ${email}`,
+    delivered: delivery.delivered,
+    delivery_mode: delivery.mode,
+    delivery_error: delivery.error,
+    message: delivery.delivered
+      ? `15-minute self-destructing OTP sent to ${email}`
+      : delivery.error || `Could not deliver OTP email to ${email}`,
     expires_at: expiresAt,
     ttl_minutes: 15,
-    dev_otp: otp,
+  };
+}
+
+// Server-only helper for /api/gmail/send-otp to look up or generate the 15-min self-destructing OTP
+export function resolveOrGenerateServerOtpForGmail(params: {
+  room_code?: string;
+  recipient_email: string;
+  user_id?: string;
+  sender_email?: string;
+}): { otp: string; expiresAt: number; lobbyTitle: string } {
+  sanitizeLobbies();
+  const cleanRoomCode = (params.room_code || '').trim();
+  const cleanRecipient = (params.recipient_email || '').trim();
+
+  if (cleanRoomCode && lobbies.has(cleanRoomCode)) {
+    const lobby = lobbies.get(cleanRoomCode)!;
+    const nowMs = Date.now();
+    if (
+      !lobby.admin_otp ||
+      typeof lobby.admin_otp_expires_at !== 'number' ||
+      nowMs >= lobby.admin_otp_expires_at
+    ) {
+      lobby.admin_otp = generateDistinctSixDigitCode([
+        lobby.room_code,
+        lobby.manager_join_code,
+      ]);
+      lobby.admin_otp_created_at = new Date().toISOString();
+      lobby.admin_otp_expires_at = nowMs + ADMIN_OTP_TTL_MS;
+    }
+    if (cleanRecipient) {
+      lobby.admin_otp_recipient = cleanRecipient;
+    }
+    saveLobbiesToDisk();
+    return {
+      otp: lobby.admin_otp,
+      expiresAt: lobby.admin_otp_expires_at,
+      lobbyTitle: lobby.title || 'Collaborative Governance Review Lobby',
+    };
+  }
+
+  // Fallback to pendingOtps for standalone/pre-room 15-min OTP
+  const existingPending = cleanRecipient
+    ? pendingOtps.get(cleanRecipient.toLowerCase())
+    : undefined;
+  if (existingPending && Date.now() < existingPending.expiresAt) {
+    return {
+      otp: existingPending.otp,
+      expiresAt: existingPending.expiresAt,
+      lobbyTitle: 'Collaborative Governance Review Lobby',
+    };
+  }
+
+  const newOtp = Math.floor(100000 + Math.random() * 900000).toString();
+  const expiresAt = Date.now() + ADMIN_OTP_TTL_MS;
+  if (cleanRecipient) {
+    pendingOtps.set(cleanRecipient.toLowerCase(), {
+      otp: newOtp,
+      expiresAt,
+      role: 'manager',
+    });
+  }
+  return {
+    otp: newOtp,
+    expiresAt,
+    lobbyTitle: 'Collaborative Governance Review Lobby',
   };
 }
 
@@ -360,9 +467,9 @@ export function getSession(token: string): UserSession | undefined {
 }
 
 // Admin creates a collaborative review lobby with:
-// 1. A 15-minute self-destructing Admin OTP sent via mail
+// 1. A 15-minute self-destructing Admin OTP sent via mail (never shown on screen)
 // 2. A DIFFERENT 6-digit Lobby Joining Code (`manager_join_code`) shown ONLY to the Manager/Admin
-export function createLobby(params: {
+export async function createLobby(params: {
   manager_id: string;
   manager_name?: string;
   manager_email: string;
@@ -372,7 +479,8 @@ export function createLobby(params: {
   initial_content?: string;
   brand_guidelines?: string;
   package_id?: string;
-}): ReviewLobby {
+  google_access_token?: string | null;
+}): Promise<{ lobby: ReviewLobby; emailDelivered: boolean; emailError?: string }> {
   sanitizeLobbies();
   if (isSuperAdminUser(params.manager_id, params.manager_email, params.security_role)) {
     throw new Error(
@@ -380,20 +488,45 @@ export function createLobby(params: {
     );
   }
 
+  const otpRecipient = (params.recipient_email || params.manager_email || '').trim();
+  const existingPreRoomOtp = otpRecipient
+    ? pendingOtps.get(otpRecipient.toLowerCase())
+    : undefined;
+
   const lobbyCode = generateDistinctSixDigitCode();
-  const adminOtp = generateDistinctSixDigitCode([lobbyCode]);
+  const hasValidPreRoomOtp =
+    existingPreRoomOtp &&
+    Date.now() < existingPreRoomOtp.expiresAt &&
+    existingPreRoomOtp.otp !== lobbyCode;
+
+  const adminOtp = hasValidPreRoomOtp
+    ? existingPreRoomOtp!.otp
+    : generateDistinctSixDigitCode([lobbyCode]);
   const managerJoinCode = generateDistinctSixDigitCode([lobbyCode, adminOtp]);
 
   const draft = params.initial_content || '';
   const guidelines = params.brand_guidelines || '';
   const now = new Date().toISOString();
-  const expiresAt = Date.now() + ADMIN_OTP_TTL_MS;
-  const otpRecipient = (params.recipient_email || params.manager_email || '').trim();
+  const expiresAt = hasValidPreRoomOtp
+    ? existingPreRoomOtp!.expiresAt
+    : Date.now() + ADMIN_OTP_TTL_MS;
+
+  let emailDelivered = false;
+  let emailError: string | undefined;
 
   if (otpRecipient) {
-    sendOtpEmail(otpRecipient, adminOtp, `${params.title || 'Lobby'} (15-Min Admin OTP)`).catch(
-      () => {}
+    const emailRes = await sendOtpEmail(
+      otpRecipient,
+      adminOtp,
+      `${params.title || 'Lobby'} (15-Min Admin OTP)`,
+      {
+        googleAccessToken: params.google_access_token,
+        senderName: params.manager_name || 'BrandLens Admin',
+        senderEmail: params.manager_email,
+      }
     );
+    emailDelivered = emailRes.delivered;
+    emailError = emailRes.error;
   }
 
   const lobby: ReviewLobby = {
@@ -442,16 +575,23 @@ export function createLobby(params: {
 
   lobbies.set(lobbyCode, lobby);
   saveLobbiesToDisk();
-  return lobby;
+  return { lobby, emailDelivered, emailError };
 }
 
 // Regenerate a fresh 15-minute self-destructing Admin OTP and send via mail
-export function regenerateAdminOtp(params: {
+export async function regenerateAdminOtp(params: {
   lobby_code: string;
   user_id?: string;
   email?: string;
   recipient_email?: string;
-}): ReviewLobby {
+  google_access_token?: string | null;
+  sender_name?: string;
+}): Promise<{
+  lobby: ReviewLobby;
+  delivered: boolean;
+  deliveryMode: string;
+  deliveryError?: string;
+}> {
   sanitizeLobbies();
   const lobby = lobbies.get(params.lobby_code.trim());
   if (!lobby) {
@@ -471,14 +611,28 @@ export function regenerateAdminOtp(params: {
   lobby.admin_otp_expires_at = expiresAt;
   lobby.admin_otp_recipient = targetEmail;
 
+  let delivered = false;
+  let deliveryMode = 'local_backup';
+  let deliveryError: string | undefined;
+
   if (targetEmail) {
-    sendOtpEmail(targetEmail, newOtp, `${lobby.title} (15-Min Self-Destructing OTP)`).catch(
-      () => {}
+    const emailRes = await sendOtpEmail(
+      targetEmail,
+      newOtp,
+      `${lobby.title} (15-Min Self-Destructing OTP)`,
+      {
+        googleAccessToken: params.google_access_token,
+        senderName: params.sender_name || lobby.created_by,
+        senderEmail: params.email || lobby.created_by_email,
+      }
     );
+    delivered = emailRes.delivered;
+    deliveryMode = emailRes.mode;
+    deliveryError = emailRes.error;
   }
 
   saveLobbiesToDisk();
-  return lobby;
+  return { lobby, delivered, deliveryMode, deliveryError };
 }
 
 // Creator requests the Admin for a different Lobby Joining Code / permission to join

@@ -75,6 +75,7 @@ interface LobbyJoinRequest {
 interface ReviewLobbySession {
   room_code: string;
   admin_otp?: string | null;
+  admin_otp_active?: boolean;
   admin_otp_created_at?: string | null;
   admin_otp_expires_at?: number | null;
   admin_otp_recipient?: string | null;
@@ -157,9 +158,8 @@ export default function CollaborativeLobbyPage() {
   const [newRoomGuidelines, setNewRoomGuidelines] = useState("");
   const [newRoomDraft, setNewRoomDraft] = useState("");
 
-  // Standalone 15-min Admin OTP state in Create Form
+  // Standalone 15-min Admin OTP state in Create Form (PIN is never stored or shown on frontend)
   const [previewAdminOtp, setPreviewAdminOtp] = useState<{
-    otp: string;
     expiresAt: number;
     recipient: string;
   } | null>(null);
@@ -317,7 +317,7 @@ export default function CollaborativeLobbyPage() {
     }
   };
 
-  // Send 15-Minute Self-Destructing OTP via Server Mail (works immediately without requiring Google OAuth)
+  // Send 15-Minute Self-Destructing OTP to Mail (delivers real email via Gmail OAuth or configured SMTP; never shows PIN on screen)
   const handleSendServerMailOtp = async (roomCode?: string, recipientOverride?: string) => {
     const targetRecipient = (
       recipientOverride ||
@@ -338,29 +338,51 @@ export default function CollaborativeLobbyPage() {
 
     setSendingPreviewOtp(true);
     try {
+      let activeToken = (await getAccessToken()) || googleToken;
+      if (!activeToken) {
+        try {
+          setIsGoogleSigningIn(true);
+          const signInRes = await googleSignIn();
+          if (signInRes?.accessToken) {
+            activeToken = signInRes.accessToken;
+            setGoogleUser(signInRes.user);
+            setGoogleToken(signInRes.accessToken);
+            setNeedsGoogleAuth(false);
+          }
+        } catch {
+          // User closed Google popup; server will still attempt configured SMTP if available
+        } finally {
+          setIsGoogleSigningIn(false);
+        }
+      }
+
       const res = await fetch("/api/lobby", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
+        },
         body: JSON.stringify({
           action: "send_admin_otp",
           room_code: roomCode,
           user_id: user.id,
-          email: user.email,
+          name: user.name,
+          email: googleUser?.email || user.email,
           recipient_email: targetRecipient,
+          google_access_token: activeToken,
         }),
       });
       const data = await res.json();
-      if (res.ok && data.ok) {
+      if (res.ok && data.ok && data.delivered) {
         if (!roomCode) {
           setPreviewAdminOtp({
-            otp: data.otp,
             expiresAt: data.expires_at,
             recipient: data.recipient,
           });
         }
         toast({
-          title: "15-Minute Self-Destructing OTP Sent!",
-          description: `OTP #${data.otp} emailed to ${data.recipient} (self-destructs in 15 minutes).`,
+          title: "15-Minute Self-Destructing OTP Emailed!",
+          description: `Confidential 6-digit OTP delivered to ${data.recipient}. Please check your email inbox (self-destructs in 15 minutes).`,
           variant: "success",
         });
         if (pendingGmailConfirmation) {
@@ -368,9 +390,14 @@ export default function CollaborativeLobbyPage() {
         }
         await fetchLobbiesAndUsers();
       } else {
+        if (data.requires_google_auth) {
+          setNeedsGoogleAuth(true);
+        }
         toast({
-          title: "Failed to Send OTP",
-          description: data.error || "Could not generate 15-minute OTP.",
+          title: "Email Delivery Required",
+          description:
+            data.error ||
+            "Please complete Google Sign-In so the 15-minute self-destructing OTP can be sent to your email inbox.",
           variant: "error",
         });
       }
@@ -383,15 +410,33 @@ export default function CollaborativeLobbyPage() {
 
   const executeConfirmedGmailSend = async () => {
     if (!pendingGmailConfirmation) return;
-    const activeToken = (await getAccessToken()) || googleToken;
+    let activeToken = (await getAccessToken()) || googleToken;
+    if (!activeToken) {
+      try {
+        setIsGoogleSigningIn(true);
+        const signInRes = await googleSignIn();
+        if (signInRes?.accessToken) {
+          activeToken = signInRes.accessToken;
+          setGoogleUser(signInRes.user);
+          setGoogleToken(signInRes.accessToken);
+          setNeedsGoogleAuth(false);
+        }
+      } catch (err: any) {
+        toast({
+          title: "Google Sign-In Required",
+          description:
+            err?.message || "Please connect your Google account to send the OTP email via Gmail.",
+          variant: "error",
+        });
+        setIsGoogleSigningIn(false);
+        return;
+      } finally {
+        setIsGoogleSigningIn(false);
+      }
+    }
+
     if (!activeToken) {
       setNeedsGoogleAuth(true);
-      toast({
-        title: "Sign in with Google or Use Instant Mail",
-        description:
-          "Connect Google to send via your Gmail account, or click 'Send 15-Min OTP via Mail Service'.",
-        variant: "info",
-      });
       return;
     }
 
@@ -405,8 +450,7 @@ export default function CollaborativeLobbyPage() {
         },
         body: JSON.stringify({
           recipients: pendingGmailConfirmation.recipients,
-          roomCode:
-            pendingGmailConfirmation.adminOtp || pendingGmailConfirmation.roomCode,
+          roomCode: pendingGmailConfirmation.roomCode,
           lobbyTitle: pendingGmailConfirmation.lobbyTitle,
           senderName: user.name,
           senderEmail: googleUser?.email || user.email,
@@ -417,10 +461,11 @@ export default function CollaborativeLobbyPage() {
       if (res.ok && data.ok) {
         toast({
           title: "15-Min Self-Destructing OTP Emailed via Gmail!",
-          description: `Delivered to ${data.recipients.join(", ")} (expires in 15 minutes).`,
+          description: `Confidential OTP delivered to ${data.recipients.join(", ")}. Check your email inbox (expires in 15 minutes).`,
           variant: "success",
         });
         setPendingGmailConfirmation(null);
+        await fetchLobbiesAndUsers();
       } else {
         toast({
           title: "Failed to Send via Gmail API",
@@ -830,9 +875,30 @@ export default function CollaborativeLobbyPage() {
     if (!newRoomTitle.trim() || isSuperAdmin) return;
     try {
       const recipientToSend = (newRoomRecipientEmail || user.email || "").trim();
+      let activeToken = (await getAccessToken()) || googleToken;
+      if (sendGmailOnCreate && recipientToSend && !activeToken) {
+        try {
+          setIsGoogleSigningIn(true);
+          const signInRes = await googleSignIn();
+          if (signInRes?.accessToken) {
+            activeToken = signInRes.accessToken;
+            setGoogleUser(signInRes.user);
+            setGoogleToken(signInRes.accessToken);
+            setNeedsGoogleAuth(false);
+          }
+        } catch {
+          // Proceed with room creation and allow user to send email from confirmation dialog if needed
+        } finally {
+          setIsGoogleSigningIn(false);
+        }
+      }
+
       const res = await fetch("/api/lobby", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(activeToken ? { Authorization: `Bearer ${activeToken}` } : {}),
+        },
         body: JSON.stringify({
           action: "create",
           title: newRoomTitle.trim(),
@@ -844,6 +910,7 @@ export default function CollaborativeLobbyPage() {
           security_role: user.securityRole,
           brand_guidelines: newRoomGuidelines || uploadedBrandRulesText,
           content_draft: newRoomDraft,
+          google_access_token: activeToken,
         }),
       });
       const data = await res.json();
@@ -856,14 +923,15 @@ export default function CollaborativeLobbyPage() {
         setNewRoomTitle("");
         toast({
           title: `Created Room "${createdTitle}"`,
-          description: `15-Min Admin OTP: #${data.admin_otp} (self-destructs in 15m) · Manager-Only Joining Code: #${data.manager_join_code}`,
+          description: data.email_delivered
+            ? `15-Min Self-Destructing OTP emailed to ${recipientToSend} · Manager-Only Joining Code: #${data.manager_join_code}`
+            : `Manager-Only Joining Code: #${data.manager_join_code}`,
           variant: "success",
         });
-        if (sendGmailOnCreate && recipientToSend) {
+        if (sendGmailOnCreate && recipientToSend && !data.email_delivered) {
           setPendingGmailConfirmation({
             recipients: recipientToSend,
             roomCode: data.room_code,
-            adminOtp: data.admin_otp,
             expiresAt: data.admin_otp_expires_at,
             lobbyTitle: createdTitle,
             otpType: "lobby_pin",
@@ -1405,24 +1473,26 @@ export default function CollaborativeLobbyPage() {
                     type="button"
                     size="sm"
                     variant="secondary"
-                    disabled={sendingPreviewOtp}
+                    disabled={sendingPreviewOtp || isGoogleSigningIn}
                     onClick={() => handleSendServerMailOtp(undefined, newRoomRecipientEmail)}
                     className="shrink-0"
                   >
                     <Timer className="h-3.5 w-3.5 text-rose-600" />
-                    {sendingPreviewOtp ? "Sending..." : "Get 15-Min OTP Now"}
+                    {sendingPreviewOtp || isGoogleSigningIn
+                      ? "Sending to Mail..."
+                      : "Send 15-Min OTP to Mail"}
                   </Button>
                 </div>
 
                 {previewAdminOtp && (
-                  <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50/80 px-3 py-2 flex items-center justify-between gap-2 text-xs">
+                  <div className="mt-2 rounded-xl border border-mint-200 bg-mint-50/80 px-3 py-2 flex items-center justify-between gap-2 text-xs">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <Timer className="h-3.5 w-3.5 text-rose-600 shrink-0" />
+                      <Mail className="h-3.5 w-3.5 text-mint-700 shrink-0" />
                       <span className="text-ink-700">
-                        Admin OTP sent to <strong>{previewAdminOtp.recipient}</strong>:
+                        15-Min OTP delivered to <strong>{previewAdminOtp.recipient}</strong>
                       </span>
-                      <span className="font-mono font-black tracking-widest bg-ink-950 text-mint-300 px-2 py-0.5 rounded">
-                        #{previewAdminOtp.otp}
+                      <span className="font-mono font-bold tracking-wider bg-mint-100 text-mint-800 border border-mint-300 px-2 py-0.5 rounded text-[11px]">
+                        Check Email Inbox (Hidden on Web)
                       </span>
                     </div>
                     <span className="text-[11px] font-bold text-rose-700 shrink-0">
@@ -1693,15 +1763,15 @@ export default function CollaborativeLobbyPage() {
                     {isMine && (
                       <div className="rounded-xl border border-line bg-ink-50/70 p-3 space-y-2 text-xs">
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <Timer className="h-3.5 w-3.5 text-rose-600" />
                             <span className="font-semibold text-ink-800">
                               Admin Mail OTP (15-Min Self-Destruct):
                             </span>
-                            {room.admin_otp && otpRemaining ? (
+                            {(room.admin_otp_active || room.admin_otp) && otpRemaining ? (
                               <>
-                                <span className="font-mono font-black tracking-widest bg-ink-900 text-amber-300 px-2 py-0.5 rounded">
-                                  #{room.admin_otp}
+                                <span className="font-mono font-bold tracking-wider bg-mint-100 text-mint-800 border border-mint-300 px-2 py-0.5 rounded text-[10px]">
+                                  Sent to {room.admin_otp_recipient || user.email}
                                 </span>
                                 <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-1.5 py-0.5 rounded">
                                   Expires in {otpRemaining}
@@ -1720,7 +1790,6 @@ export default function CollaborativeLobbyPage() {
                               setPendingGmailConfirmation({
                                 recipients: room.admin_otp_recipient || user.email,
                                 roomCode: room.room_code,
-                                adminOtp: room.admin_otp,
                                 expiresAt: room.admin_otp_expires_at,
                                 lobbyTitle: room.title,
                                 otpType: "lobby_pin",
@@ -1729,8 +1798,8 @@ export default function CollaborativeLobbyPage() {
                             className="inline-flex items-center gap-1 rounded-lg border border-brand-200 bg-white px-2 py-1 text-[10px] font-bold text-brand-700 hover:bg-brand-50"
                           >
                             <Mail className="h-3 w-3" />
-                            {room.admin_otp && otpRemaining
-                              ? "Email 15-Min OTP"
+                            {(room.admin_otp_active || room.admin_otp) && otpRemaining
+                              ? "Resend 15-Min OTP to Mail"
                               : "Generate & Mail New 15-Min OTP"}
                           </button>
                         </div>
@@ -2176,8 +2245,8 @@ export default function CollaborativeLobbyPage() {
                   15-Min Admin OTP:
                 </span>
                 <div className="flex items-center gap-2">
-                  <span className="font-mono font-black tracking-widest bg-ink-950 text-mint-300 px-2.5 py-0.5 rounded">
-                    #{pendingGmailConfirmation.adminOtp || pendingGmailConfirmation.roomCode}
+                  <span className="font-mono font-bold tracking-wider bg-ink-900 text-mint-300 px-2.5 py-0.5 rounded text-[11px]">
+                    Confidential · Sent to Email Only
                   </span>
                   <span className="text-[10px] font-bold text-rose-700 bg-rose-100 px-2 py-0.5 rounded">
                     {formatCountdown(pendingGmailConfirmation.expiresAt, nowMs) || "15m TTL"}

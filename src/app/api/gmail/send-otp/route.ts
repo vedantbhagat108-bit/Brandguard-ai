@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { securityDB } from "@/backend/database.ts";
+import { resolveOrGenerateServerOtpForGmail } from "@/backend/lobby.ts";
 
 export const runtime = "nodejs";
 
@@ -61,25 +62,27 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const roomCode = String(body.roomCode ?? body.otpCode ?? "").trim();
-  if (!roomCode) {
-    return NextResponse.json(
-      { error: "A 6-digit OTP / Room Code is required." },
-      { status: 400 }
-    );
-  }
-
-  const lobbyTitle = String(
-    body.lobbyTitle ?? "Collaborative Governance Review Lobby"
-  ).trim();
+  const requestedRoomCode = String(body.roomCode ?? body.otpCode ?? "").trim();
   const senderName = String(body.senderName ?? "BrandLens Admin").trim();
   const senderEmail = String(body.senderEmail ?? "").trim();
   const otpType =
     body.otpType === "step_up_otp" ? "step_up_otp" : "lobby_pin";
 
+  // Resolve or generate the confidential 6-digit 15-minute self-destructing OTP strictly on the server
+  const serverOtpInfo = resolveOrGenerateServerOtpForGmail({
+    room_code: requestedRoomCode || undefined,
+    recipient_email: validRecipients[0],
+    sender_email: senderEmail,
+  });
+
+  const confidentialOtpCode = serverOtpInfo.otp;
+  const lobbyTitle = String(
+    body.lobbyTitle ?? serverOtpInfo.lobbyTitle ?? "Collaborative Governance Review Lobby"
+  ).trim();
+
   const subject =
     otpType === "step_up_otp"
-      ? `[BrandLens AI] Your 6-Digit Step-Up Verification OTP: ${roomCode}`
+      ? `[BrandLens AI] Your 6-Digit Step-Up Verification OTP`
       : `[BrandLens AI] Your 6-Digit Review Lobby OTP Code for "${lobbyTitle}"`;
 
   const htmlBody = `
@@ -113,7 +116,7 @@ export async function POST(req: NextRequest) {
             ${otpType === "step_up_otp" ? "6-Digit Verification OTP (Self-Destructs in 15 Min)" : "Confidential 6-Digit OTP (Self-Destructs in 15 Minutes)"}
           </div>
           <div style="margin-top: 8px; font-family: 'Courier New', monospace; font-size: 30px; font-weight: 800; letter-spacing: 0.25em; color: #0f172a;">
-            ${roomCode}
+            ${confidentialOtpCode}
           </div>
           <div style="margin-top: 6px; font-size: 11px; color: #e11d48; font-weight: 600;">
             ⏱ Self-destructs automatically in 15 minutes
@@ -191,6 +194,8 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       ok: true,
+      delivered: true,
+      expires_at: serverOtpInfo.expiresAt,
       messageId: gmailData.id,
       threadId: gmailData.threadId,
       recipients: validRecipients,

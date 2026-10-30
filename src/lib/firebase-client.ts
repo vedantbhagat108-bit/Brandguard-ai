@@ -118,33 +118,29 @@ export async function syncAccountToFirestore(
   const userPath = `users/${uid}`;
   const privatePath = `users/${uid}/private/info`;
 
-  const role: SecurityRole =
-    account.securityRole === "ADMIN" ||
-    account.securityRole === "REVIEWER" ||
-    account.securityRole === "CREATOR"
-      ? account.securityRole
-      : account.role === "manager"
+  const validRole: "ADMIN" | "REVIEWER" | "CREATOR" =
+    account.securityRole === "SUPER_ADMIN" || account.securityRole === "ADMIN"
+      ? "ADMIN"
+      : account.securityRole === "REVIEWER"
       ? "REVIEWER"
       : "CREATOR";
 
-  // Note: Only bootstrapped admins or existing admins can write role == 'ADMIN' in Firestore rules.
   const isBootstrappedAdmin =
     fbUser.email === "ash258296@gmail.com" && fbUser.emailVerified;
-  const safeFirestoreRole: SecurityRole =
-    role === "ADMIN" && !isBootstrappedAdmin ? "REVIEWER" : role;
 
   const publicData = {
-    uid,
+    userId: uid,
+    ownerUid: uid,
     username: sanitizeUsername(
       account.username || account.email.split("@")[0] || "brand_user"
     ),
-    name: (account.name || fbUser.displayName || "Workspace User").slice(0, 120),
-    role: safeFirestoreRole,
-    department: (account.department || "Marketing").slice(0, 100),
+    name: (account.name || fbUser.displayName || "Workspace User").slice(0, 100),
+    role: validRole,
+    department: (account.department || "Marketing").slice(0, 80),
     brand_id: (
       account.brand_id || "b0000001-0000-4000-8000-000000000001"
-    ).slice(0, 100),
-    brand_name: (account.brand_name || "EcoFresh Botanicals").slice(0, 120),
+    ).slice(0, 64),
+    brand_name: (account.brand_name || "EcoFresh Botanicals").slice(0, 100),
     is_approved: Boolean(account.isApproved),
     lobby_access: Boolean(account.lobbyAccess ?? account.isApproved),
   };
@@ -161,12 +157,24 @@ export async function syncAccountToFirestore(
     if (existingSnap && existingSnap.exists()) {
       const existingData = existingSnap.data();
       try {
-        await updateDoc(userRef, {
-          ...publicData,
-          role: safeFirestoreRole,
-          createdAt: existingData.createdAt,
-          updatedAt: serverTimestamp(),
-        });
+        if (isBootstrappedAdmin) {
+          await updateDoc(userRef, {
+            ...publicData,
+            userId: existingData.userId || uid,
+            ownerUid: existingData.ownerUid || uid,
+            createdAt: existingData.createdAt,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          // Non-admin owners can only update profile metadata per Firestore security rules;
+          // role, is_approved, and lobby_access are strictly governed by Super Admin.
+          await updateDoc(userRef, {
+            name: publicData.name,
+            department: publicData.department,
+            brand_name: publicData.brand_name,
+            updatedAt: serverTimestamp(),
+          });
+        }
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, userPath);
       }
@@ -174,6 +182,9 @@ export async function syncAccountToFirestore(
       try {
         await setDoc(userRef, {
           ...publicData,
+          role: isBootstrappedAdmin ? validRole : "CREATOR",
+          is_approved: isBootstrappedAdmin ? publicData.is_approved : false,
+          lobby_access: isBootstrappedAdmin ? publicData.lobby_access : false,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   ShieldCheck,
   Lock,
@@ -137,8 +137,10 @@ export default function AccessManagementPage() {
   const [newPinPrefix, setNewPinPrefix] = useState("PIN");
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState("");
   const [copiedPin, setCopiedPin] = useState<string | null>(null);
+  const isMutatingRef = useRef(false);
 
-  const loadSecurityData = useCallback(async (silent = false) => {
+  const loadSecurityData = useCallback(async (silent = false, force = false) => {
+    if (silent && !force && isMutatingRef.current) return;
     if (!silent) setLoading(true);
     try {
       const pinsRes = await fetch("/api/pins", {
@@ -305,6 +307,7 @@ export default function AccessManagementPage() {
     targetUserId: string,
     action: "approve" | "revoke" | "grant_lobby" | "revoke_lobby"
   ) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/access/grant", {
         method: "POST",
@@ -334,14 +337,19 @@ export default function AccessManagementPage() {
           description: data.message || `Updated permissions for ${targetUserId}.`,
           variant: action.includes("revoke") ? "info" : "success",
         });
-        await loadSecurityData(true);
+        await loadSecurityData(true, true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
+        try {
+          localStorage.setItem("brandlens-role-updated-ts", String(Date.now()));
+        } catch {}
       } else {
         toast({ title: "Action failed", description: data.error, variant: "error" });
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
@@ -349,6 +357,7 @@ export default function AccessManagementPage() {
     targetUserId: string,
     newRole: "ADMIN" | "REVIEWER" | "CREATOR"
   ) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/access/grant", {
         method: "POST",
@@ -366,14 +375,22 @@ export default function AccessManagementPage() {
       });
       const data = await res.json();
       if (res.ok) {
+        if (data.user) {
+          setDbUsers((prev) =>
+            prev.map((u) => (u.id === data.user.id ? { ...u, ...data.user } : u))
+          );
+        }
         toast({
           title: `Role Updated to ${newRole === "REVIEWER" ? "MANAGER" : newRole}`,
           description: data.message,
           variant: "success",
         });
-        await loadSecurityData(true);
+        await loadSecurityData(true, true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
+        try {
+          localStorage.setItem("brandlens-role-updated-ts", String(Date.now()));
+        } catch {}
       } else {
         toast({
           title: "Role Update Denied",
@@ -383,6 +400,8 @@ export default function AccessManagementPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
@@ -390,6 +409,7 @@ export default function AccessManagementPage() {
     targetUserId: string,
     approve: boolean
   ) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/access/grant", {
         method: "POST",
@@ -406,14 +426,22 @@ export default function AccessManagementPage() {
       });
       const data = await res.json();
       if (res.ok) {
+        if (data.user) {
+          setDbUsers((prev) =>
+            prev.map((u) => (u.id === data.user.id ? { ...u, ...data.user } : u))
+          );
+        }
         toast({
           title: approve ? "Role Request Approved" : "Role Request Declined",
           description: data.message,
           variant: approve ? "success" : "info",
         });
-        await loadSecurityData(true);
+        await loadSecurityData(true, true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
+        try {
+          localStorage.setItem("brandlens-role-updated-ts", String(Date.now()));
+        } catch {}
       } else {
         toast({
           title: "Action Failed",
@@ -423,6 +451,8 @@ export default function AccessManagementPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 

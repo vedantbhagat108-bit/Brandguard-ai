@@ -39,6 +39,7 @@ export interface DBUserRecord {
   is_approved: boolean;
   lobby_access: boolean;
   created_at: string;
+  updated_at?: string;
   password_updated_at?: string;
   requested_role?: 'ADMIN' | 'REVIEWER' | 'CREATOR' | null;
   role_request_status?: 'pending' | 'approved' | 'rejected' | null;
@@ -481,6 +482,7 @@ export class MultiTenantSecurityDB {
     target.lobby_access = true;
     target.requested_role = null;
     target.role_request_status = 'approved';
+    target.updated_at = new Date().toISOString();
     this.users.set(target.id, target);
     this.saveToDisk();
 
@@ -542,6 +544,7 @@ export class MultiTenantSecurityDB {
     user.role_request_status = 'pending';
     user.role_request_note = (params.note || '').trim() || null;
     user.role_request_at = new Date().toISOString();
+    user.updated_at = user.role_request_at;
     this.users.set(user.id, user);
     this.saveToDisk();
 
@@ -587,6 +590,7 @@ export class MultiTenantSecurityDB {
 
     target.requested_role = null;
     target.role_request_status = 'rejected';
+    target.updated_at = new Date().toISOString();
     this.users.set(target.id, target);
     this.saveToDisk();
 
@@ -611,6 +615,7 @@ export class MultiTenantSecurityDB {
     targetIdentifier: string;
     lobbyAccess: boolean;
   }): DBUserRecord {
+    this.loadFromDisk();
     const actor = this.findUserByIdOrIdentifier(params.actorId);
     const effectiveActorRole = (actor?.role || params.actorRole || 'ADMIN').toUpperCase();
 
@@ -635,7 +640,9 @@ export class MultiTenantSecurityDB {
     }
 
     target.lobby_access = params.lobbyAccess;
+    target.updated_at = new Date().toISOString();
     this.users.set(target.id, target);
+    this.saveToDisk();
 
     this.logAudit({
       brand_id: target.brand_id,
@@ -912,14 +919,23 @@ export class MultiTenantSecurityDB {
   }
 
   private getStorageFilePath(): string {
+    const tmpPath = '/tmp/brandlens-security-db.json';
     try {
       const localDir = path.join(process.cwd(), '.data');
+      const localFile = path.join(localDir, 'security-db.json');
       if (!fs.existsSync(localDir)) {
         fs.mkdirSync(localDir, { recursive: true });
       }
-      return path.join(localDir, 'security-db.json');
+      fs.accessSync(localDir, fs.constants.W_OK);
+      return localFile;
     } catch {
-      return '/tmp/brandlens-security-db.json';
+      try {
+        const bundledFile = path.join(process.cwd(), '.data', 'security-db.json');
+        if (!fs.existsSync(tmpPath) && fs.existsSync(bundledFile)) {
+          fs.copyFileSync(bundledFile, tmpPath);
+        }
+      } catch {}
+      return tmpPath;
     }
   }
 
@@ -1018,6 +1034,13 @@ export class MultiTenantSecurityDB {
             }
             if (u.email.toLowerCase() === 'admin@gmail.com') {
               u.role = 'SUPER_ADMIN';
+            }
+            const currentInMem = this.users.get(id);
+            if (
+              currentInMem?.updated_at &&
+              (!u.updated_at || currentInMem.updated_at > u.updated_at)
+            ) {
+              continue; // Keep newer in-memory record
             }
             this.users.set(id, u);
           }

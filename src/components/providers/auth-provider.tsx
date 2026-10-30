@@ -175,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(nextUser);
     setIsAuthenticated(true);
     try {
+      localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(nextUser));
       localStorage.setItem(STORAGE_AUTH_ACTIVE_KEY, "true");
     } catch {}
     // Only sync to Firestore if the current Firebase user matches this account email!
@@ -374,6 +375,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             roleRequestNote: targetRoleReqNote,
             roleRequestAt: targetRoleReqAt,
           };
+          try {
+            localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(updated));
+          } catch {}
+          if (
+            auth.currentUser &&
+            auth.currentUser.email &&
+            updated.email &&
+            auth.currentUser.email.toLowerCase() === updated.email.toLowerCase()
+          ) {
+            void syncAccountToFirestore(updated);
+          }
           return updated;
         });
       }

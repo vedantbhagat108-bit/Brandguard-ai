@@ -29,41 +29,118 @@ export function buildOtpEmailHtml(pinCode: string, brandName: string = 'BrandLen
   return { subject, htmlContent };
 }
 
+function encodeBase64Url(input: string): string {
+  return Buffer.from(input, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+}
+
+export interface SendOtpEmailOptions {
+  googleAccessToken?: string | null;
+  senderName?: string;
+  senderEmail?: string;
+}
+
+export interface SendOtpEmailResult {
+  delivered: boolean;
+  mode: 'gmail_api' | 'smtp' | 'local_backup';
+  from: string;
+  messageId?: string;
+  error?: string;
+}
+
 export async function sendOtpEmail(
   recipientEmail: string,
   pinCode: string,
-  brandName: string = 'BrandLens AI'
-): Promise<{ delivered: boolean; mode: 'smtp' | 'local_backup'; from: string }> {
+  brandName: string = 'BrandLens AI',
+  options?: SendOtpEmailOptions
+): Promise<SendOtpEmailResult> {
   const { subject, htmlContent } = buildOtpEmailHtml(pinCode, brandName);
+  let lastError: string | undefined;
 
-  // If default placeholder app password is set or no real SMTP credentials configured, log to local backup immediately
-  if (!SMTP_PASSWORD || SMTP_PASSWORD === 'your_16_digit_app_password') {
-    console.log(
-      `[Email Service Warning]: Could not deliver via SMTP (SMTP_PASSWORD not configured for ${SMTP_HOST}:${SMTP_PORT})`
-    );
-    console.log(`[LOCAL BACKUP]: OTP for ${recipientEmail} is -> ${pinCode}`);
-    return { delivered: false, mode: 'local_backup', from: FROM_EMAIL };
+  // 1. Primary: If a Google OAuth access token is provided, deliver directly via Gmail API
+  const googleToken = options?.googleAccessToken?.trim();
+  if (googleToken) {
+    try {
+      const rawMime = [
+        `To: ${recipientEmail}`,
+        `Subject: =?UTF-8?B?${Buffer.from(subject, 'utf-8').toString('base64')}?=`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/html; charset="UTF-8"',
+        '',
+        htmlContent,
+      ].join('\r\n');
+
+      const encodedMessage = encodeBase64Url(rawMime);
+      const gmailRes = await fetch(
+        'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${googleToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ raw: encodedMessage }),
+        }
+      );
+
+      const gmailData = await gmailRes.json().catch(() => ({}));
+      if (gmailRes.ok) {
+        console.log(
+          `[Email Service]: Successfully delivered 15-min OTP to ${recipientEmail} via Gmail API`
+        );
+        return {
+          delivered: true,
+          mode: 'gmail_api',
+          from: options?.senderEmail || FROM_EMAIL,
+          messageId: gmailData?.id,
+        };
+      } else {
+        lastError =
+          gmailData?.error?.message ||
+          `Gmail API returned HTTP ${gmailRes.status}`;
+        console.warn(`[Email Service]: Gmail API send failed: ${lastError}`);
+      }
+    } catch (err: any) {
+      lastError = err?.message || 'Gmail API network error';
+      console.warn(`[Email Service]: Gmail API error: ${lastError}`);
+    }
   }
 
-  try {
-    await sendViaSmtpStartTls({
-      host: SMTP_HOST,
-      port: SMTP_PORT,
-      user: SMTP_USER,
-      pass: SMTP_PASSWORD,
-      from: `${brandName} <${FROM_EMAIL}>`,
-      fromAddress: FROM_EMAIL,
-      to: recipientEmail,
-      subject,
-      html: htmlContent,
-    });
-    console.log(`[Email Service]: Successfully sent OTP to ${recipientEmail} via ${FROM_EMAIL}`);
-    return { delivered: true, mode: 'smtp', from: FROM_EMAIL };
-  } catch (exc: any) {
-    console.log(`[Email Service Warning]: Could not deliver via SMTP (${exc?.message || exc})`);
-    console.log(`[LOCAL BACKUP]: OTP for ${recipientEmail} is -> ${pinCode}`);
-    return { delivered: false, mode: 'local_backup', from: FROM_EMAIL };
+  // 2. Secondary: Deliver via SMTP STARTTLS if real SMTP credentials are configured
+  if (SMTP_PASSWORD && SMTP_PASSWORD !== 'your_16_digit_app_password') {
+    try {
+      await sendViaSmtpStartTls({
+        host: SMTP_HOST,
+        port: SMTP_PORT,
+        user: SMTP_USER,
+        pass: SMTP_PASSWORD,
+        from: `${brandName} <${FROM_EMAIL}>`,
+        fromAddress: FROM_EMAIL,
+        to: recipientEmail,
+        subject,
+        html: htmlContent,
+      });
+      console.log(
+        `[Email Service]: Successfully sent OTP to ${recipientEmail} via SMTP (${FROM_EMAIL})`
+      );
+      return { delivered: true, mode: 'smtp', from: FROM_EMAIL };
+    } catch (exc: any) {
+      lastError = exc?.message || String(exc);
+      console.warn(`[Email Service Warning]: Could not deliver via SMTP (${lastError})`);
+    }
   }
+
+  return {
+    delivered: false,
+    mode: 'local_backup',
+    from: FROM_EMAIL,
+    error:
+      lastError ||
+      'Email could not be delivered because neither Google Gmail OAuth nor SMTP_PASSWORD is active.',
+  };
 }
 
 async function sendViaSmtpStartTls(params: {

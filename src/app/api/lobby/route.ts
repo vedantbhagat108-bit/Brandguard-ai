@@ -12,6 +12,7 @@ import {
   requestLobbyJoinCode,
   resolveLobbyJoinRequest,
   requestOtp,
+  sanitizeLobbyForClient,
 } from '@/backend/lobby.ts';
 import { securityDB } from '@/backend/database.ts';
 import { UserRole } from '@/backend/types.ts';
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
     if (!lobby) {
       return NextResponse.json({ detail: `Lobby "${code}" not found.` }, { status: 404 });
     }
-    return NextResponse.json(lobby);
+    return NextResponse.json(sanitizeLobbyForClient(lobby));
   }
 
   return NextResponse.json(
@@ -76,7 +77,15 @@ export async function POST(req: NextRequest) {
       permission_granted,
       request_id,
       approve,
+      google_access_token,
     } = body;
+
+    const authHeader = req.headers.get('Authorization') || req.headers.get('authorization');
+    const bearerToken =
+      authHeader && authHeader.startsWith('Bearer ')
+        ? authHeader.slice(7).trim()
+        : null;
+    const effectiveGoogleToken = (google_access_token || bearerToken || '').trim() || null;
 
     const targetCode = (room_code || lobby_code || '').trim();
     const rawRole = role || creator_role || author_role || user_role || 'content_creator';
@@ -155,7 +164,7 @@ export async function POST(req: NextRequest) {
           permission_granted: granted,
         },
       });
-      return NextResponse.json(updated);
+      return NextResponse.json(sanitizeLobbyForClient(updated));
     }
 
     // Check person-level lobby permission for non-Super-Admin users
@@ -174,7 +183,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Admin requests or regenerates a 15-minute self-destructing OTP via mail
+    // Admin requests or regenerates a 15-minute self-destructing OTP via mail (NEVER returned in plaintext to frontend)
     if (action === 'send_admin_otp') {
       const targetEmail = (recipient_email || email || '').trim();
       if (!targetEmail) {
@@ -184,25 +193,59 @@ export async function POST(req: NextRequest) {
         );
       }
       if (targetCode) {
-        const updatedLobby = regenerateAdminOtp({
+        const regenRes = await regenerateAdminOtp({
           lobby_code: targetCode,
           user_id: actorId,
           email,
           recipient_email: targetEmail,
+          google_access_token: effectiveGoogleToken,
+          sender_name: actorName,
         });
+        if (!regenRes.delivered) {
+          return NextResponse.json(
+            {
+              ok: false,
+              delivered: false,
+              requires_google_auth: !effectiveGoogleToken,
+              error:
+                regenRes.deliveryError ||
+                'Please sign in with Google so the 15-minute self-destructing OTP can be delivered to your email inbox.',
+            },
+            { status: 401 }
+          );
+        }
         return NextResponse.json({
           ok: true,
-          otp: updatedLobby.admin_otp,
-          expires_at: updatedLobby.admin_otp_expires_at,
+          delivered: true,
+          delivery_mode: regenRes.deliveryMode,
+          expires_at: regenRes.lobby.admin_otp_expires_at,
           recipient: targetEmail,
-          lobby: updatedLobby,
-          message: `15-minute self-destructing OTP sent to ${targetEmail}.`,
+          lobby: sanitizeLobbyForClient(regenRes.lobby),
+          message: `15-minute self-destructing OTP delivered to ${targetEmail}. Please check your email inbox.`,
         });
       } else {
-        const otpRes = requestOtp(targetEmail, 'manager');
+        const otpRes = await requestOtp(targetEmail, 'manager', {
+          googleAccessToken: effectiveGoogleToken,
+          senderName: actorName,
+          senderEmail: email,
+        });
+        if (!otpRes.delivered) {
+          return NextResponse.json(
+            {
+              ok: false,
+              delivered: false,
+              requires_google_auth: !effectiveGoogleToken,
+              error:
+                otpRes.delivery_error ||
+                'Please sign in with Google so the 15-minute self-destructing OTP can be delivered to your email inbox.',
+            },
+            { status: 401 }
+          );
+        }
         return NextResponse.json({
           ok: true,
-          otp: otpRes.dev_otp,
+          delivered: true,
+          delivery_mode: otpRes.delivery_mode,
           expires_at: otpRes.expires_at,
           recipient: targetEmail,
           message: otpRes.message,
@@ -274,7 +317,7 @@ export async function POST(req: NextRequest) {
 
       return NextResponse.json({
         ok: true,
-        lobby,
+        lobby: sanitizeLobbyForClient(lobby),
         request,
         message: approve
           ? `Accepted ${request.name} (${request.email}). They can now enter the room directly or join using Joining Code #${request.requested_join_code || lobby.manager_join_code}.`
@@ -283,7 +326,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'create') {
-      const lobby = createLobby({
+      const { lobby, emailDelivered, emailError } = await createLobby({
         manager_id: actorId,
         manager_name: actorName,
         manager_email: email,
@@ -293,6 +336,7 @@ export async function POST(req: NextRequest) {
         initial_content: content_draft ?? initial_content,
         brand_guidelines,
         package_id,
+        google_access_token: effectiveGoogleToken,
       });
 
       securityDB.logAudit({
@@ -304,10 +348,18 @@ export async function POST(req: NextRequest) {
           room_code: lobby.room_code,
           title: lobby.title,
           created_by: actorName,
+          otp_email_delivered: emailDelivered,
         },
       });
 
-      return NextResponse.json(lobby, { status: 201 });
+      return NextResponse.json(
+        {
+          ...sanitizeLobbyForClient(lobby),
+          email_delivered: emailDelivered,
+          email_error: emailError,
+        },
+        { status: 201 }
+      );
     }
 
     if (action === 'join') {
@@ -335,7 +387,7 @@ export async function POST(req: NextRequest) {
         details: { room_code: lobby.room_code, participant: actorName, role: normalizedRole },
       });
 
-      return NextResponse.json(lobby);
+      return NextResponse.json(sanitizeLobbyForClient(lobby));
     }
 
     if (['update_content', 'add_note', 'manager_approve', 'close'].includes(action)) {
@@ -369,7 +421,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      return NextResponse.json(updated);
+      return NextResponse.json(sanitizeLobbyForClient(updated));
     }
 
     return NextResponse.json({ error: `Unsupported lobby action "${action}"` }, { status: 400 });
