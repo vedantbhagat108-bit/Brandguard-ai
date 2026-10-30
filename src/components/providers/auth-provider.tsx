@@ -292,7 +292,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           ? "SUPER_ADMIN"
           : (apiUser?.role as SecurityRole) ||
             (data.role as SecurityRole) ||
-            currentUser.securityRole ||
             "CREATOR";
 
         const resolvedAppRole: AppUserRole =

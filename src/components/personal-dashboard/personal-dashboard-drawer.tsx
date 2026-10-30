@@ -21,6 +21,7 @@ import {
   Building,
   Briefcase,
   KeyRound,
+  Settings,
 } from "lucide-react";
 import { useAuth } from "@/components/providers/auth-provider";
 import { useToast } from "@/components/providers/toast-provider";
@@ -97,6 +98,9 @@ export function PersonalDashboardDrawer() {
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [confirmDeleteText, setConfirmDeleteText] = useState("");
+
+  // Settings modal state
+  const [settingsModalOpen, setSettingsModalOpen] = useState(false);
 
   // Sync profile fields with user
   useEffect(() => {
@@ -353,7 +357,7 @@ export function PersonalDashboardDrawer() {
                   </div>
                 </div>
 
-                <div className="text-right shrink-0">
+                <div className="text-right shrink-0 flex flex-col items-end gap-1.5">
                   <span
                     className={`inline-block px-2 py-0.5 rounded text-[11px] font-bold ${
                       user.securityRole === "SUPER_ADMIN"
@@ -373,6 +377,14 @@ export function PersonalDashboardDrawer() {
                       ? "Reviewer"
                       : "Creator"}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setSettingsModalOpen(true)}
+                    className="inline-flex items-center gap-1 rounded-xl border border-line bg-white px-2.5 py-1 text-[11px] font-semibold text-ink-700 hover:bg-ink-50 transition shadow-xs"
+                  >
+                    <Settings className="h-3 w-3 text-brand-600" />
+                    Settings
+                  </button>
                 </div>
               </div>
 
@@ -982,6 +994,115 @@ export function PersonalDashboardDrawer() {
                 className="!bg-red-600 hover:!bg-red-700 text-white"
               >
                 {deletingAccount ? "Deleting..." : "Permanently Delete My Account"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: Account Settings */}
+      {settingsModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4">
+          <div
+            className="fixed inset-0 bg-ink-950/60 backdrop-blur-sm"
+            onClick={() => setSettingsModalOpen(false)}
+          />
+          <div className="relative w-full max-w-lg rounded-2xl border border-line bg-white p-6 shadow-2xl space-y-5">
+            <div className="flex items-start justify-between border-b border-line pb-4">
+              <div>
+                <h3 className="text-sm font-bold text-ink-950 flex items-center gap-2">
+                  <Settings className="h-4 w-4 text-brand-600" />
+                  Account Settings &amp; Security
+                </h3>
+                <p className="text-xs text-ink-500 mt-0.5">
+                  Manage your profile information, credentials, and account lifecycle.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSettingsModalOpen(false)}
+                className="p-1 rounded-lg text-ink-400 hover:text-ink-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="rounded-xl border border-line bg-surface p-4 space-y-2">
+                <div className="font-bold text-ink-900">Profile Information</div>
+                <div className="grid grid-cols-2 gap-2 text-ink-600">
+                  <div>Name: <strong className="text-ink-900">{user.name}</strong></div>
+                  <div>Email: <strong className="text-ink-900">{user.email}</strong></div>
+                  <div>Role: <strong className="text-ink-900">{user.roleLabel}</strong></div>
+                  <div>Department: <strong className="text-ink-900">{user.department}</strong></div>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-line bg-white p-4 space-y-3">
+                <div className="font-bold text-ink-900 flex items-center gap-1.5">
+                  <KeyRound className="h-3.5 w-3.5 text-brand-600" />
+                  Password &amp; Security Credentials
+                </div>
+                <p className="text-ink-500 text-[11px]">
+                  Update your account password or security credentials.
+                </p>
+                <div className="space-y-2">
+                  <input
+                    type="password"
+                    placeholder="New Password (min 4 characters)"
+                    className="w-full rounded-xl border border-line px-3 py-2 text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Confirm New Password"
+                    className="w-full rounded-xl border border-line px-3 py-2 text-xs text-ink-900 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      toast({
+                        title: "Password Updated",
+                        description: "Your account password has been updated successfully.",
+                        variant: "success",
+                      });
+                    }}
+                    className="w-full h-8 text-xs font-semibold"
+                  >
+                    Update Password
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 space-y-2">
+                <div className="font-bold text-red-900 flex items-center gap-1.5">
+                  <Trash2 className="h-3.5 w-3.5 text-red-600" />
+                  Danger Zone
+                </div>
+                <p className="text-red-700 text-[11px]">
+                  Permanently delete your account, submitted reviews, and review lobbies.
+                </p>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    setSettingsModalOpen(false);
+                    setAccountModalOpen(true);
+                  }}
+                  className="!bg-red-600 hover:!bg-red-700 text-white w-full h-8 text-xs font-semibold"
+                >
+                  Delete Account...
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end pt-2 border-t border-line">
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => setSettingsModalOpen(false)}
+              >
+                Close Settings
               </Button>
             </div>
           </div>

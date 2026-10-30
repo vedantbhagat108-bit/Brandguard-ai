@@ -307,29 +307,29 @@ export class MultiTenantSecurityDB {
       this.users.set(demoUser.id, demoUser);
     }
 
-    // Ensure vedantbhagat108 account exists
-    const vedantDeleted =
-      this.deletedUserEmails.has('vedantbhagat108@gmail.com') ||
-      this.deletedUserEmails.has('vedantbhagat108');
-    const existingVedant =
-      this.findUserByEmail('vedantbhagat108@gmail.com') ||
-      this.findUserByUsername('vedantbhagat108');
-    if (!existingVedant && !vedantDeleted) {
-      const vedantUser: DBUserRecord = {
-        id: 'u_vedant_108',
-        username: 'vedantbhagat108',
-        email: 'vedantbhagat108@gmail.com',
-        hashed_password: hashPassword('vedant123'),
+    // Ensure demo creator account exists
+    const creatorDeleted =
+      this.deletedUserEmails.has('demo@gmail.com') ||
+      this.deletedUserEmails.has('democreator');
+    const existingCreator =
+      this.findUserByEmail('demo@gmail.com') ||
+      this.findUserByUsername('democreator');
+    if (!existingCreator && !creatorDeleted) {
+      const creatorUser: DBUserRecord = {
+        id: 'u_demo_creator',
+        username: 'democreator',
+        email: 'demo@gmail.com',
+        hashed_password: hashPassword('password123'),
         role: 'CREATOR',
         brand_id: defaultBrandId,
         brand_name: defaultBrandName,
-        name: 'vedantbhagat108',
+        name: 'Demo Creator',
         department: 'Marketing',
         is_approved: true,
         lobby_access: true,
         created_at: now,
       };
-      this.users.set(vedantUser.id, vedantUser);
+      this.users.set(creatorUser.id, creatorUser);
     }
   }
 

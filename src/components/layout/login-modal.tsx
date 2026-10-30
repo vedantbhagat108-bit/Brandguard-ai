@@ -80,6 +80,26 @@ export function LoginModal() {
     }
   };
 
+  const handleDemoLogin = async (identifier: string, pass: string) => {
+    setSubmitting(true);
+    const res = await loginWithCredentials(identifier, pass);
+    setSubmitting(false);
+    if (res.ok) {
+      toast({
+        title: "Hackathon Demo Sign-In Successful",
+        description: `Signed in as test account (${identifier}).`,
+        variant: "success",
+      });
+      setLoginModalOpen(false);
+    } else {
+      toast({
+        title: "Demo Sign-In Failed",
+        description: res.error || "Could not sign in.",
+        variant: "error",
+      });
+    }
+  };
+
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setSubmitting(true);
@@ -269,6 +289,36 @@ export function LoginModal() {
 
         {/* Body */}
         <div className="p-6 max-h-[68vh] overflow-y-auto space-y-4">
+          {/* HACKATHON DEMO QUICK SIGN-IN BANNER */}
+          <div className="rounded-xl border border-purple-300 bg-gradient-to-r from-purple-50 via-brand-50/50 to-white p-4 shadow-xs space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-purple-600 px-2.5 py-0.5 text-[10px] font-bold text-white uppercase tracking-wider">
+                🚀 Hackathon Demo Quick Sign-In
+              </span>
+              <span className="text-[11px] text-ink-500 font-medium">Instant Test Accounts</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleDemoLogin("admin@gmail.com", "Ashu@12")}
+                className="rounded-xl bg-purple-700 px-3 py-2 text-xs font-bold text-white hover:bg-purple-600 transition flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-mint-300" />
+                Sign in as Super Admin
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => handleDemoLogin("demo@gmail.com", "password123")}
+                className="rounded-xl bg-brand-600 px-3 py-2 text-xs font-bold text-white hover:bg-brand-500 transition flex items-center justify-center gap-1.5 shadow-xs"
+              >
+                <UserPlus className="h-3.5 w-3.5 text-mint-300" />
+                Sign in as Creator
+              </button>
+            </div>
+          </div>
+
           {/* Cross-Device Cloud Sync Banner */}
           <div className="rounded-xl border border-brand-200 bg-brand-50/60 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div className="flex items-start gap-2.5">
