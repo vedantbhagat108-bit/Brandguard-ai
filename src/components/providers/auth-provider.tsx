@@ -387,7 +387,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Real-time role & permission synchronization: poll on focus + interval (3.5s) + on custom event
+  // Real-time role & permission synchronization: poll on focus + interval (2s) + on custom event + cross-tab storage event
   useEffect(() => {
     if (!isAuthenticated || !user.email) return;
 
@@ -395,17 +395,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const interval = window.setInterval(() => {
       void refreshAccessStatus();
-    }, 3500);
+    }, 2000);
 
     const handleFocus = () => void refreshAccessStatus();
     const handleRoleEvent = () => void refreshAccessStatus();
+    const handleStorageEvent = (e: StorageEvent) => {
+      if (e.key === STORAGE_AUTH_KEY || e.key === "brandlens-role-updated-ts") {
+        void refreshAccessStatus();
+      }
+    };
 
     window.addEventListener("focus", handleFocus);
     window.addEventListener("brandlens-role-updated", handleRoleEvent);
+    window.addEventListener("storage", handleStorageEvent);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", handleFocus);
       window.removeEventListener("brandlens-role-updated", handleRoleEvent);
+      window.removeEventListener("storage", handleStorageEvent);
     };
   }, [isAuthenticated, user.email, refreshAccessStatus]);
 

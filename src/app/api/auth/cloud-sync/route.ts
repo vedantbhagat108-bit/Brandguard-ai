@@ -67,11 +67,18 @@ export async function POST(req: NextRequest) {
         ? (role as DBRole)
         : "CREATOR";
 
-    let existing =
-      securityDB.findUserByEmail(normalizedEmail) ||
-      (uid ? securityDB.users.get(String(uid)) : undefined);
+    let existing = securityDB.findUserByEmail(normalizedEmail);
+    if (!existing && uid) {
+      existing = securityDB.users.get(String(uid));
+    }
 
     if (existing) {
+      // If user matched by email has a different ID than incoming uid, unify them under uid
+      if (uid && existing.id !== String(uid)) {
+        securityDB.users.delete(existing.id);
+        existing.id = String(uid);
+      }
+
       // Preserve authoritative role, approval, and lobby_access set by Super Admin in securityDB
       existing.name = name || existing.name;
       existing.department = department || existing.department;

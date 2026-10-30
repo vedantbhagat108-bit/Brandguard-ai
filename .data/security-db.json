@@ -26,6 +26,15 @@
         "brand_name": "Test Brand",
         "created_at": "2026-10-29T21:33:08.947Z"
       }
+    ],
+    [
+      "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      {
+        "id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+        "name": "Test Workspace",
+        "brand_name": "Test Workspace",
+        "created_at": "2026-10-29T22:15:02.315Z"
+      }
     ]
   ],
   "users": [
@@ -104,6 +113,102 @@
   "guidelines": [],
   "submissions": [],
   "auditLogs": [
+    {
+      "id": "ae5eca0e-ebb4-411d-972d-7b2cbe70e6bf",
+      "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      "user_id": "f0acebf2-99f0-4520-87e5-7a10e39c3a98",
+      "user_email": "roletest_1793312101240@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "USER_ACCOUNT_DELETED",
+      "details": {
+        "email": "roletest_1793312101240@test.com",
+        "username": "roletest_1793312101240",
+        "name": "Roletest 1793312101240",
+        "role": "ADMIN"
+      },
+      "details_text": "email: roletest_1793312101240@test.com · username: roletest_1793312101240 · name: Roletest 1793312101240 · role: ADMIN",
+      "timestamp": "2026-10-29T22:15:03.041Z"
+    },
+    {
+      "id": "c36d2896-f773-4f5e-b492-dea3202a7d34",
+      "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      "user_id": "u_super_admin",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "roletest_1793312101240@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: roletest_1793312101240@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-29T22:15:02.556Z"
+    },
+    {
+      "id": "4abdb595-fe78-41ca-8c47-7da2b41da697",
+      "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      "user_id": "u_super_admin",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "target_user": "roletest_1793312101240@test.com",
+        "username": "roletest_1793312101240",
+        "previous_role": "CREATOR",
+        "new_role": "ADMIN",
+        "updated_by": "Super Admin"
+      },
+      "details_text": "target_user: roletest_1793312101240@test.com · username: roletest_1793312101240 · previous_role: CREATOR · new_role: ADMIN · updated_by: Super Admin",
+      "timestamp": "2026-10-29T22:15:02.556Z"
+    },
+    {
+      "id": "e07c04f9-d94b-449f-be27-4a09937a7103",
+      "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      "user_id": "f0acebf2-99f0-4520-87e5-7a10e39c3a98",
+      "user_email": "roletest_1793312101240@test.com",
+      "ip_address": "127.0.0.1",
+      "action": "USER_REGISTERED",
+      "details": {
+        "username": "roletest_1793312101240",
+        "email": "roletest_1793312101240@test.com",
+        "role": "CREATOR",
+        "redeemed_pin": "Direct Account Signup",
+        "brand": "Test Workspace"
+      },
+      "details_text": "username: roletest_1793312101240 · email: roletest_1793312101240@test.com · role: CREATOR · redeemed_pin: Direct Account Signup · brand: Test Workspace",
+      "timestamp": "2026-10-29T22:15:02.322Z"
+    },
+    {
+      "id": "118687d3-1db7-41bf-9a62-bc9d62692f52",
+      "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "LOBBY_ACCESS_UPDATED",
+      "details": {
+        "target_user": "roletest_1793312101240@test.com",
+        "username": "roletest_1793312101240",
+        "lobby_rights": "GRANTED",
+        "updated_by": "system"
+      },
+      "details_text": "target_user: roletest_1793312101240@test.com · username: roletest_1793312101240 · lobby_rights: GRANTED · updated_by: system",
+      "timestamp": "2026-10-29T22:15:02.321Z"
+    },
+    {
+      "id": "d2ebd043-ba39-4e96-ae34-e840196af5ca",
+      "brand_id": "ws_8745d213-747e-47aa-b9b4-4f8ce95eb11a",
+      "user_id": "self-registered",
+      "user_email": "system",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "target_user": "roletest_1793312101240@test.com",
+        "access_status": "approved",
+        "lobby_access": "GRANTED"
+      },
+      "details_text": "target_user: roletest_1793312101240@test.com · access_status: approved · lobby_access: GRANTED",
+      "timestamp": "2026-10-29T22:15:02.320Z"
+    },
     {
       "id": "a1179666-bfde-4559-854b-652e502e65eb",
       "brand_id": "b0000000-0000-4000-8000-000000000000",
@@ -297,6 +402,9 @@
   "deletedUserEmails": [
     "5189aa57-4907-404b-b392-5a9e24ae2abd",
     "testcreator_1793309588706@test.com",
-    "testcreator_1793309588706"
+    "testcreator_1793309588706",
+    "f0acebf2-99f0-4520-87e5-7a10e39c3a98",
+    "roletest_1793312101240@test.com",
+    "roletest_1793312101240"
   ]
 }
