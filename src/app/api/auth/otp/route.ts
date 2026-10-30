@@ -12,6 +12,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const { action = 'request', email, otp, code, role = 'content_creator' } = body;
     const otpValue = otp || code;
@@ -44,6 +45,7 @@ export async function POST(req: NextRequest) {
 
       // Find or create user in securityDB
       let dbUser: DBUserRecord | undefined = securityDB.findUserByEmail(cleanEmail);
+      const nowIso = new Date().toISOString();
       if (!dbUser) {
         const defaultBrandId = 'b0000001-0000-4000-8000-000000000001';
         const newDbUser: DBUserRecord = {
@@ -58,7 +60,9 @@ export async function POST(req: NextRequest) {
           department: 'Marketing',
           is_approved: true,
           lobby_access: true,
-          created_at: new Date().toISOString(),
+          created_at: nowIso,
+          updated_at: nowIso,
+          version: 1,
         };
         securityDB.users.set(newDbUser.id, newDbUser);
         securityDB.saveToDisk();
@@ -81,6 +85,8 @@ export async function POST(req: NextRequest) {
         details: { username: dbUser.username, email: dbUser.email, role: dbUser.role },
       });
 
+      await securityDB.saveToCloud();
+
       const workspace = securityDB.workspaces.get(dbUser.brand_id);
 
       return NextResponse.json({
@@ -98,6 +104,8 @@ export async function POST(req: NextRequest) {
           department: dbUser.department,
           is_approved: dbUser.is_approved,
           lobby_access: typeof dbUser.lobby_access === 'boolean' ? dbUser.lobby_access : true,
+          version: dbUser.version || 1,
+          updated_at: dbUser.updated_at || dbUser.created_at,
         },
       });
     }

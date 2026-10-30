@@ -60,6 +60,7 @@ export class HybridVectorStore {
       if (!fs.existsSync(localDir)) {
         fs.mkdirSync(localDir, { recursive: true });
       }
+      fs.accessSync(localDir, fs.constants.W_OK);
       return path.join(localDir, 'knowledge-store.json');
     } catch {
       return '/tmp/brandlens-knowledge-store.json';

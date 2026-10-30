@@ -42,6 +42,9 @@ interface DBUserSummary {
   department: string;
   is_approved: boolean;
   lobby_access?: boolean;
+  version?: number;
+  updated_at?: string;
+  is_demo?: boolean;
   requested_role?: "ADMIN" | "REVIEWER" | "CREATOR" | null;
   role_request_status?: "pending" | "approved" | "rejected" | null;
   role_request_note?: string | null;
@@ -150,12 +153,33 @@ export default function AccessManagementPage() {
 
       if (pinsRes.ok) {
         const secData = await pinsRes.json();
-        const incomingUsers = Array.isArray(secData.users) ? secData.users : [];
+        const incomingUsers: DBUserSummary[] = Array.isArray(secData.users) ? secData.users : [];
         const incomingLogs = Array.isArray(secData.audit_logs) ? secData.audit_logs : [];
         const incomingPins = Array.isArray(secData.pins) ? secData.pins : [];
         const incomingWorkspaces = Array.isArray(secData.workspaces) ? secData.workspaces : [];
 
-        setDbUsers(incomingUsers);
+        setDbUsers((prev) => {
+          if (prev.length === 0) return incomingUsers;
+          const prevMap = new Map(prev.map((u) => [u.id, u]));
+          return incomingUsers.map((inc) => {
+            const cur = prevMap.get(inc.id);
+            if (!cur) return inc;
+            const inVer = typeof inc.version === "number" ? inc.version : 1;
+            const curVer = typeof cur.version === "number" ? cur.version : 1;
+            if (inVer < curVer) {
+              return cur;
+            }
+            if (
+              inVer === curVer &&
+              cur.updated_at &&
+              inc.updated_at &&
+              inc.updated_at < cur.updated_at
+            ) {
+              return cur;
+            }
+            return inc;
+          });
+        });
         setAuditLogs(incomingLogs);
         setPins(incomingPins);
         setWorkspaces(incomingWorkspaces);
@@ -325,6 +349,11 @@ export default function AccessManagementPage() {
 
       const data = await res.json();
       if (res.ok) {
+        if (data.user) {
+          setDbUsers((prev) =>
+            prev.map((u) => (u.id === data.user.id ? { ...u, ...data.user } : u))
+          );
+        }
         toast({
           title:
             action === "grant_lobby"
@@ -340,9 +369,6 @@ export default function AccessManagementPage() {
         await loadSecurityData(true, true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
-        try {
-          localStorage.setItem("brandlens-role-updated-ts", String(Date.now()));
-        } catch {}
       } else {
         toast({ title: "Action failed", description: data.error, variant: "error" });
       }
@@ -388,9 +414,6 @@ export default function AccessManagementPage() {
         await loadSecurityData(true, true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
-        try {
-          localStorage.setItem("brandlens-role-updated-ts", String(Date.now()));
-        } catch {}
       } else {
         toast({
           title: "Role Update Denied",
@@ -439,9 +462,6 @@ export default function AccessManagementPage() {
         await loadSecurityData(true, true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
-        try {
-          localStorage.setItem("brandlens-role-updated-ts", String(Date.now()));
-        } catch {}
       } else {
         toast({
           title: "Action Failed",

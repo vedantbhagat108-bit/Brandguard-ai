@@ -3,6 +3,7 @@ import path from 'path';
 import { UserRole } from './types.ts';
 import { securityDB } from './database.ts';
 import { sendOtpEmail } from './emailService.ts';
+import { readFirestoreSlice, writeFirestoreSlice } from './firestoreStateSync.ts';
 
 export interface UserSession {
   user_id: string;
@@ -61,6 +62,8 @@ export interface ReviewLobby {
   shared_content_draft: string;
   shared_brand_guidelines: string;
   created_at: string;
+  updated_at?: string;
+  version?: number;
   status: 'active' | 'approved' | 'closed';
   permission_granted: boolean;
   participants: LobbyParticipant[];
@@ -84,14 +87,16 @@ function generateDistinctSixDigitCode(exclude: Array<string | undefined | null> 
 }
 
 function getLobbiesStorageFilePath(): string {
+  const tmpPath = '/tmp/brandlens-lobbies-db.json';
   try {
     const localDir = path.join(process.cwd(), '.data');
     if (!fs.existsSync(localDir)) {
       fs.mkdirSync(localDir, { recursive: true });
     }
+    fs.accessSync(localDir, fs.constants.W_OK);
     return path.join(localDir, 'lobbies-db.json');
   } catch {
-    return '/tmp/brandlens-lobbies-db.json';
+    return tmpPath;
   }
 }
 
@@ -133,7 +138,9 @@ const globalForLobby = globalThis as unknown as {
   lobbySessions?: Map<string, UserSession>;
   lobbyPendingOtps?: Map<string, { otp: string; expiresAt: number; role: UserRole }>;
   reviewLobbies?: Map<string, ReviewLobby>;
-  lobbiesLoadedFromDisk?: boolean;
+  discardedLobbyCodes?: Set<string>;
+  lobbiesVersion?: number;
+  lastLobbyCloudPullMs?: number;
 };
 
 const sessions =
@@ -143,20 +150,92 @@ const pendingOtps =
   (globalForLobby.lobbyPendingOtps = new Map<string, { otp: string; expiresAt: number; role: UserRole }>());
 const lobbies =
   globalForLobby.reviewLobbies ?? (globalForLobby.reviewLobbies = new Map<string, ReviewLobby>());
+const discardedLobbyCodes =
+  globalForLobby.discardedLobbyCodes ?? (globalForLobby.discardedLobbyCodes = new Set<string>());
+if (typeof globalForLobby.lobbiesVersion !== 'number') {
+  globalForLobby.lobbiesVersion = 1;
+}
+
+function isIncomingLobbyNewer(incoming: ReviewLobby, current: ReviewLobby): boolean {
+  const inVer = typeof incoming.version === 'number' ? incoming.version : 1;
+  const curVer = typeof current.version === 'number' ? current.version : 1;
+  if (inVer !== curVer) {
+    return inVer > curVer;
+  }
+  const inTs = incoming.updated_at || incoming.created_at || '';
+  const curTs = current.updated_at || current.created_at || '';
+  return inTs >= curTs;
+}
+
+function applyParsedLobbiesState(parsed: any): boolean {
+  if (!parsed || typeof parsed !== 'object') return false;
+  let changed = false;
+
+  if (
+    typeof parsed.lobbiesVersion === 'number' &&
+    parsed.lobbiesVersion > (globalForLobby.lobbiesVersion || 1)
+  ) {
+    globalForLobby.lobbiesVersion = parsed.lobbiesVersion;
+    changed = true;
+  }
+
+  if (Array.isArray(parsed.discardedLobbyCodes)) {
+    for (const c of parsed.discardedLobbyCodes) {
+      const code = String(c).trim();
+      if (code && !discardedLobbyCodes.has(code)) {
+        discardedLobbyCodes.add(code);
+        lobbies.delete(code);
+        changed = true;
+      }
+    }
+  }
+
+  if (Array.isArray(parsed.lobbies)) {
+    for (const item of parsed.lobbies) {
+      let code: string | undefined;
+      let room: ReviewLobby | undefined;
+      if (Array.isArray(item) && item.length === 2) {
+        [code, room] = item;
+      } else if (item && typeof item === 'object' && item.room_code) {
+        code = item.room_code;
+        room = item;
+      }
+      if (
+        code &&
+        room &&
+        !LEGACY_DEMO_LOBBY_CODES.has(code) &&
+        !discardedLobbyCodes.has(code)
+      ) {
+        if (typeof room.version !== 'number') room.version = 1;
+        if (!room.updated_at) room.updated_at = room.created_at;
+        const cur = lobbies.get(code);
+        if (!cur || isIncomingLobbyNewer(room, cur)) {
+          lobbies.set(code, room);
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed;
+}
+
+function serializeLobbiesState() {
+  return {
+    lobbiesVersion: globalForLobby.lobbiesVersion || 1,
+    lobbies: Array.from(lobbies.entries()),
+    discardedLobbyCodes: Array.from(discardedLobbyCodes),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 function loadLobbiesFromDisk() {
   try {
     const filePath = getLobbiesStorageFilePath();
     if (!fs.existsSync(filePath)) return;
     const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw || !raw.trim()) return;
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed.lobbies)) {
-      for (const [code, room] of parsed.lobbies) {
-        if (code && room && !LEGACY_DEMO_LOBBY_CODES.has(code)) {
-          lobbies.set(code, room as ReviewLobby);
-        }
-      }
-    }
+    applyParsedLobbiesState(parsed);
   } catch {
     // Ignore missing or unreadable file
   }
@@ -164,25 +243,66 @@ function loadLobbiesFromDisk() {
 
 function saveLobbiesToDisk() {
   try {
+    globalForLobby.lobbiesVersion = (globalForLobby.lobbiesVersion || 1) + 1;
     const filePath = getLobbiesStorageFilePath();
-    const payload = {
-      lobbies: Array.from(lobbies.entries()),
-      updatedAt: new Date().toISOString(),
-    };
-    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
+    const payload = serializeLobbiesState();
+    const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
+    fs.renameSync(tempPath, filePath);
   } catch {
     // Safe fallback in read-only environments
   }
 }
 
-// Clean any legacy demo lobbies and self-destruct expired 15-min Admin OTPs
-function sanitizeLobbies() {
-  if (!globalForLobby.lobbiesLoadedFromDisk) {
-    loadLobbiesFromDisk();
-    globalForLobby.lobbiesLoadedFromDisk = true;
+export async function syncLobbiesFromCloud(force = false): Promise<void> {
+  loadLobbiesFromDisk();
+  const nowMs = Date.now();
+  if (!force && nowMs - (globalForLobby.lastLobbyCloudPullMs || 0) < 750) {
+    return;
   }
+  globalForLobby.lastLobbyCloudPullMs = nowMs;
+
+  const remote = await readFirestoreSlice<any>('lobbies_db');
+  if (!remote || !remote.data) {
+    return;
+  }
+
+  const changed = applyParsedLobbiesState({
+    ...remote.data,
+    lobbiesVersion: Math.max(remote.version || 1, remote.data.lobbiesVersion || 1),
+  });
+  if (changed) {
+    try {
+      const filePath = getLobbiesStorageFilePath();
+      const payload = serializeLobbiesState();
+      const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+      fs.writeFileSync(tempPath, JSON.stringify(payload, null, 2), 'utf8');
+      fs.renameSync(tempPath, filePath);
+    } catch {}
+  }
+}
+
+export async function saveLobbiesToCloud(): Promise<boolean> {
+  globalForLobby.lobbiesVersion = (globalForLobby.lobbiesVersion || 1) + 1;
+  saveLobbiesToDisk();
+  const nowIso = new Date().toISOString();
+  const payload = serializeLobbiesState();
+  return writeFirestoreSlice(
+    'lobbies_db',
+    globalForLobby.lobbiesVersion,
+    nowIso,
+    payload
+  );
+}
+
+// Clean any legacy demo lobbies, reload from disk, and self-destruct expired 15-min Admin OTPs
+function sanitizeLobbies() {
+  loadLobbiesFromDisk();
   for (const demoCode of LEGACY_DEMO_LOBBY_CODES) {
     lobbies.delete(demoCode);
+  }
+  for (const discarded of discardedLobbyCodes) {
+    lobbies.delete(discarded);
   }
   let dirty = false;
   const nowMs = Date.now();
@@ -199,6 +319,12 @@ function sanitizeLobbies() {
       room.join_requests = [];
       dirty = true;
     }
+    if (typeof room.version !== 'number') {
+      room.version = 1;
+    }
+    if (!room.updated_at) {
+      room.updated_at = room.created_at;
+    }
     // Self-destruct Admin OTP after 15 minutes
     if (
       room.admin_otp &&
@@ -206,6 +332,8 @@ function sanitizeLobbies() {
       nowMs > room.admin_otp_expires_at
     ) {
       room.admin_otp = null;
+      room.updated_at = new Date().toISOString();
+      room.version = (room.version || 1) + 1;
       dirty = true;
     }
   }
@@ -549,6 +677,8 @@ export async function createLobby(params: {
     shared_content_draft: draft,
     shared_brand_guidelines: guidelines,
     created_at: now,
+    updated_at: now,
+    version: 1,
     status: 'active',
     permission_granted: true,
     manager_approved: false,
@@ -573,6 +703,7 @@ export async function createLobby(params: {
     ],
   };
 
+  discardedLobbyCodes.delete(lobbyCode);
   lobbies.set(lobbyCode, lobby);
   saveLobbiesToDisk();
   return { lobby, emailDelivered, emailError };
@@ -610,6 +741,8 @@ export async function regenerateAdminOtp(params: {
   lobby.admin_otp_created_at = now;
   lobby.admin_otp_expires_at = expiresAt;
   lobby.admin_otp_recipient = targetEmail;
+  lobby.updated_at = now;
+  lobby.version = (lobby.version || 1) + 1;
 
   let delivered = false;
   let deliveryMode = 'local_backup';
@@ -660,13 +793,16 @@ export function requestLobbyJoinCode(params: {
       (Boolean(cleanEmail) && r.email.toLowerCase() === cleanEmail)
   );
 
+  const now = new Date().toISOString();
   if (existingReq) {
     existingReq.status = 'pending';
     existingReq.note = params.note || existingReq.note;
-    existingReq.requested_at = new Date().toISOString();
+    existingReq.requested_at = now;
     if (!existingReq.requested_join_code) {
       existingReq.requested_join_code = lobby.manager_join_code;
     }
+    lobby.updated_at = now;
+    lobby.version = (lobby.version || 1) + 1;
     saveLobbiesToDisk();
     return { lobby, request: existingReq };
   }
@@ -687,10 +823,12 @@ export function requestLobbyJoinCode(params: {
     note: params.note,
     requested_join_code: distinctJoinCode,
     status: 'pending',
-    requested_at: new Date().toISOString(),
+    requested_at: now,
   };
 
   lobby.join_requests.push(newReq);
+  lobby.updated_at = now;
+  lobby.version = (lobby.version || 1) + 1;
   saveLobbiesToDisk();
   return { lobby, request: newReq };
 }
@@ -717,8 +855,9 @@ export function resolveLobbyJoinRequest(params: {
     throw new Error('Join request not found.');
   }
 
+  const now = new Date().toISOString();
   reqItem.status = params.approve ? 'accepted' : 'declined';
-  reqItem.resolved_at = new Date().toISOString();
+  reqItem.resolved_at = now;
 
   if (params.approve) {
     // Upon accepting the request from the creator, add them to participants so they can either:
@@ -735,7 +874,7 @@ export function resolveLobbyJoinRequest(params: {
         name: reqItem.name || reqItem.email,
         email: reqItem.email,
         role: reqItem.role || 'content_creator',
-        joined_at: new Date().toISOString(),
+        joined_at: now,
       });
     }
 
@@ -744,10 +883,12 @@ export function resolveLobbyJoinRequest(params: {
       author_name: lobby.created_by,
       author_role: 'manager',
       text: `Admin accepted join request from ${reqItem.name} (${reqItem.email}).`,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
     });
   }
 
+  lobby.updated_at = now;
+  lobby.version = (lobby.version || 1) + 1;
   saveLobbiesToDisk();
   return { lobby, request: reqItem };
 }
@@ -830,6 +971,8 @@ export function joinLobby(params: {
       Date.now() > lobby.admin_otp_expires_at
     ) {
       lobby.admin_otp = null;
+      lobby.updated_at = new Date().toISOString();
+      lobby.version = (lobby.version || 1) + 1;
       saveLobbiesToDisk();
       throw new Error(
         'This 15-minute Admin OTP has self-destructed. Please generate a new OTP or use the Manager Lobby Joining Code.'
@@ -861,17 +1004,20 @@ export function joinLobby(params: {
   }
 
   if (!isParticipant) {
+    const now = new Date().toISOString();
     lobby.participants.push({
       user_id: params.user_id,
       name: params.name || params.email,
       email: params.email,
       role: params.role,
-      joined_at: new Date().toISOString(),
+      joined_at: now,
     });
     if (myJoinReq && myJoinReq.status !== 'accepted') {
       myJoinReq.status = 'accepted';
-      myJoinReq.resolved_at = new Date().toISOString();
+      myJoinReq.resolved_at = now;
     }
+    lobby.updated_at = now;
+    lobby.version = (lobby.version || 1) + 1;
     saveLobbiesToDisk();
   }
 
@@ -886,6 +1032,7 @@ export function discardLobby(lobbyCode: string): ReviewLobby {
     throw new Error(`Lobby "${code}" not found.`);
   }
   lobbies.delete(code);
+  discardedLobbyCodes.add(code);
   saveLobbiesToDisk();
   return existing;
 }
@@ -899,6 +1046,8 @@ export function setLobbyPermission(lobbyCode: string, granted: boolean): ReviewL
   }
   existing.permission_granted = granted;
   existing.status = granted ? 'active' : 'closed';
+  existing.updated_at = new Date().toISOString();
+  existing.version = (existing.version || 1) + 1;
   saveLobbiesToDisk();
   return existing;
 }
@@ -936,6 +1085,7 @@ export function updateLobbyState(params: {
     throw new Error('Lobby permission has been revoked by Super Admin.');
   }
 
+  const now = new Date().toISOString();
   if (params.action === 'update_content') {
     if (params.content !== undefined) {
       lobby.shared_content = params.content;
@@ -957,7 +1107,7 @@ export function updateLobbyState(params: {
           ? 'manager'
           : 'content_creator',
       text: params.note,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
     });
   } else if (params.action === 'manager_approve') {
     if (params.role !== 'manager' && params.role !== 'admin' && params.role !== 'authorised_reviewer') {
@@ -970,12 +1120,14 @@ export function updateLobbyState(params: {
       author_name: params.author_name || params.user_id,
       author_role: 'manager',
       text: `Approved by Manager ${params.author_name || params.user_id}`,
-      timestamp: new Date().toISOString(),
+      timestamp: now,
     });
   } else if (params.action === 'close') {
     lobby.status = 'closed';
   }
 
+  lobby.updated_at = now;
+  lobby.version = (lobby.version || 1) + 1;
   saveLobbiesToDisk();
   return lobby;
 }
@@ -990,6 +1142,7 @@ export function deleteLobbiesForUser(userId?: string | null, email?: string | nu
   for (const [code, room] of Array.from(lobbies.entries())) {
     if (isRoomCreator(room, cleanId, cleanEmail)) {
       lobbies.delete(code);
+      discardedLobbyCodes.add(code);
       count++;
     }
   }

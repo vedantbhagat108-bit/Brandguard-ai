@@ -15,7 +15,7 @@ export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
-    securityDB.loadFromDisk();
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const {
       uid,
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
 
     if (
       securityDB.deletedUserEmails.has(normalizedEmail) ||
-      (cleanUid && securityDB.deletedUserEmails.has(cleanUid))
+      (cleanUid && securityDB.deletedUserEmails.has(cleanUid.toLowerCase()))
     ) {
       return NextResponse.json(
         { detail: "This account has been permanently deleted and cannot be synchronized." },
@@ -67,37 +67,44 @@ export async function POST(req: NextRequest) {
         ? (role as DBRole)
         : "CREATOR";
 
-    let existing = securityDB.findUserByEmail(normalizedEmail);
-    if (!existing && uid) {
-      existing = securityDB.users.get(String(uid));
-    }
+    let existing =
+      securityDB.findUserByEmail(normalizedEmail) ||
+      (cleanUid ? securityDB.findUserByIdOrIdentifier(cleanUid) : undefined);
 
     if (existing) {
-      // If user matched by email has a different ID than incoming uid, unify them under uid
-      if (uid && existing.id !== String(uid)) {
-        securityDB.users.delete(existing.id);
-        existing.id = String(uid);
+      // Keep existing.id immutable as the canonical primary key; link firebase_uid if new
+      let needsSave = false;
+      if (cleanUid && existing.firebase_uid !== cleanUid) {
+        existing.firebase_uid = cleanUid;
+        needsSave = true;
       }
-
-      // Preserve authoritative role, approval, and lobby_access set by Super Admin in securityDB
-      existing.name = name || existing.name;
-      existing.department = department || existing.department;
-      if (workspace_name || brand_name) {
-        existing.brand_id = workspace.id;
-        existing.brand_name = workspace.name;
+      if (!existing.name && name) {
+        existing.name = name;
+        needsSave = true;
       }
-      if (existing.email.toLowerCase() === "admin@gmail.com") {
+      if (!existing.department && department) {
+        existing.department = department;
+        needsSave = true;
+      }
+      if (existing.email.toLowerCase() === "admin@gmail.com" && existing.role !== "SUPER_ADMIN") {
         existing.role = "SUPER_ADMIN";
+        needsSave = true;
       }
       if (typeof existing.lobby_access !== "boolean") {
         existing.lobby_access = true;
+        needsSave = true;
       }
-      securityDB.users.set(existing.id, existing);
-      securityDB.saveToDisk();
+      if (needsSave) {
+        securityDB.users.set(existing.id, existing);
+        securityDB.saveToDisk();
+        await securityDB.saveToCloud();
+      }
     } else {
-      const userId = uid ? String(uid) : `cloud_${Date.now()}`;
+      const nowIso = new Date().toISOString();
+      const userId = cleanUid || `cloud_${Date.now()}`;
       const newUser: DBUserRecord = {
         id: userId,
+        firebase_uid: cleanUid || undefined,
         username: cleanUsername,
         email: normalizedEmail,
         hashed_password: hashPassword(`cloud_oauth_${userId}`),
@@ -108,7 +115,9 @@ export async function POST(req: NextRequest) {
         department,
         is_approved: true,
         lobby_access: true,
-        created_at: new Date().toISOString(),
+        created_at: nowIso,
+        updated_at: nowIso,
+        version: 1,
       };
       securityDB.users.set(newUser.id, newUser);
       securityDB.saveToDisk();
@@ -126,6 +135,7 @@ export async function POST(req: NextRequest) {
         action: "approve",
         department,
       });
+      await securityDB.saveToCloud();
       existing = newUser;
     }
 
@@ -147,6 +157,7 @@ export async function POST(req: NextRequest) {
       token_type: "bearer",
       user: {
         id: existing.id,
+        firebase_uid: existing.firebase_uid || null,
         username: existing.username,
         email: existing.email,
         name: existing.name,
@@ -156,6 +167,8 @@ export async function POST(req: NextRequest) {
         department: existing.department,
         is_approved: existing.is_approved,
         lobby_access: existing.lobby_access !== false,
+        version: existing.version || 1,
+        updated_at: existing.updated_at || existing.created_at,
         requested_role: existing.requested_role || null,
         role_request_status: existing.role_request_status || null,
         role_request_note: existing.role_request_note || null,

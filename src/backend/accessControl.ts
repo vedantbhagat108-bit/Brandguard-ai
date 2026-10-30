@@ -180,6 +180,7 @@ export function getAccessStatus(userId: string, email?: string | null) {
       : 'b0000001-0000-4000-8000-000000000001';
     const workspaceName =
       securityDB.workspaces.get(defaultBrandId)?.name || 'Default Workspace';
+    const nowIso = new Date().toISOString();
     dbUser = {
       id: isSuper ? 'u0000000-super-admin' : userId || `usr_${Date.now()}`,
       username: isSuper ? 'admin' : cleanEmail.split('@')[0],
@@ -192,10 +193,13 @@ export function getAccessStatus(userId: string, email?: string | null) {
       department: 'Marketing',
       is_approved: true,
       lobby_access: true,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
+      updated_at: nowIso,
+      version: 1,
     };
     securityDB.users.set(dbUser.id, dbUser);
     securityDB.saveToDisk();
+    void securityDB.saveToCloud();
     syncGrantsFromSecurityDB();
   }
 
@@ -215,6 +219,8 @@ export function getAccessStatus(userId: string, email?: string | null) {
     is_approved: isApproved,
     lobby_access: lobbyAccess,
     role: dbUser?.role || grant?.security_role || 'CREATOR',
+    version: dbUser?.version || 1,
+    updated_at: dbUser?.updated_at || dbUser?.created_at || new Date().toISOString(),
     user: dbUser
       ? {
           id: dbUser.id,
@@ -227,6 +233,8 @@ export function getAccessStatus(userId: string, email?: string | null) {
           department: dbUser.department,
           is_approved: dbUser.is_approved,
           lobby_access: dbUser.lobby_access !== false,
+          version: dbUser.version || 1,
+          updated_at: dbUser.updated_at || dbUser.created_at,
           requested_role: dbUser.requested_role || null,
           role_request_status: dbUser.role_request_status || null,
           role_request_note: dbUser.role_request_note || null,
@@ -305,18 +313,28 @@ export function updateAccessGrant(params: {
       grant.lobby_access = false;
     }
     if (dbUser) {
+      const nowIso = new Date().toISOString();
       dbUser.is_approved = params.action === 'approve';
       dbUser.lobby_access = grant.lobby_access;
+      dbUser.updated_at = nowIso;
+      dbUser.version = (dbUser.version || 1) + 1;
       securityDB.users.set(dbUser.id, dbUser);
+      securityDB.saveToDisk();
+      const actor = securityDB.findUserByIdOrIdentifier(params.manager_id);
       securityDB.logAudit({
         brand_id: dbUser.brand_id,
         user_id: params.manager_id,
-        user_email: securityDB.findUserByIdOrIdentifier(params.manager_id)?.email || 'system',
+        user_email: actor?.email || 'system',
         action: 'STATUS_UPDATED',
         details: {
+          actor_id: params.manager_id,
+          actor_email: actor?.email || 'system',
+          target_user_id: dbUser.id,
           target_user: dbUser.email,
           access_status: grant.status,
           lobby_access: grant.lobby_access ? 'GRANTED' : 'REVOKED',
+          version: dbUser.version,
+          timestamp: nowIso,
         },
       });
     }
@@ -340,3 +358,4 @@ export function updateAccessGrant(params: {
   accessGrants.set(grant.user_id, grant);
   return grant;
 }
+

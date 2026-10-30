@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requestDatabaseAccess } from '@/backend/accessControl.ts';
+import { securityDB } from '@/backend/database.ts';
 
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const { user_id, email, department = 'marketing', role = 'content_creator' } = body;
 
@@ -19,6 +21,7 @@ export async function POST(req: NextRequest) {
       role,
     });
 
+    await securityDB.saveToCloud();
     return NextResponse.json({ success: true, grant });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });

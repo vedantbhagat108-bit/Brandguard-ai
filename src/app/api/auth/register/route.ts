@@ -14,6 +14,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const {
       username,
@@ -32,6 +33,20 @@ export async function POST(req: NextRequest) {
     if (!password || password.length < 4) {
       return NextResponse.json(
         { detail: 'Password (minimum 4 characters) is required.' },
+        { status: 400 }
+      );
+    }
+
+    const allowedSignupRoles = new Set([
+      'ADMIN',
+      'REVIEWER',
+      'CREATOR',
+      'manager',
+      'content_creator',
+    ]);
+    if (role && !allowedSignupRoles.has(String(role))) {
+      return NextResponse.json(
+        { detail: `Invalid role "${role}". Self-registration only permits ADMIN, REVIEWER, or CREATOR.` },
         { status: 400 }
       );
     }
@@ -112,7 +127,6 @@ export async function POST(req: NextRequest) {
         .replace(/[._-]/g, ' ')
         .replace(/\b\w/g, (l: string) => l.toUpperCase());
 
-    // Disallow self-registration as SUPER_ADMIN (Super Admin is pre-provisioned as admin@gmail.com)
     const normalizedRole: DBRole = ['ADMIN', 'REVIEWER', 'CREATOR'].includes(role)
       ? (role as DBRole)
       : role === 'manager'
@@ -125,6 +139,7 @@ export async function POST(req: NextRequest) {
       pinVerified ||
       !require_pin;
 
+    const nowIso = new Date().toISOString();
     const newUser: DBUserRecord = {
       id: userId,
       username: cleanUsername,
@@ -137,7 +152,9 @@ export async function POST(req: NextRequest) {
       department,
       is_approved: isApproved,
       lobby_access: isApproved,
-      created_at: new Date().toISOString(),
+      created_at: nowIso,
+      updated_at: nowIso,
+      version: 1,
     };
 
     securityDB.users.set(newUser.id, newUser);
@@ -181,6 +198,8 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    await securityDB.saveToCloud();
+
     const token = createAccessToken({
       sub: newUser.id,
       username: newUser.username,
@@ -204,6 +223,8 @@ export async function POST(req: NextRequest) {
           department: newUser.department,
           is_approved: newUser.is_approved,
           lobby_access: newUser.lobby_access,
+          version: newUser.version || 1,
+          updated_at: newUser.updated_at,
         },
       },
       { status: 201 }

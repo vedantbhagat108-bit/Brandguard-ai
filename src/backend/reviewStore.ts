@@ -105,6 +105,7 @@ class BackendReviewStore {
       if (!fs.existsSync(localDir)) {
         fs.mkdirSync(localDir, { recursive: true });
       }
+      fs.accessSync(localDir, fs.constants.W_OK);
       return path.join(localDir, 'reviews-db.json');
     } catch {
       return '/tmp/brandlens-reviews-db.json';

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Users,
   KeyRound,
@@ -100,6 +100,8 @@ interface ReviewLobbySession {
   participants: LobbyParticipant[];
   notes: LobbyNote[];
   last_score?: number;
+  version?: number;
+  updated_at?: string;
 }
 
 interface DBUserSummary {
@@ -112,6 +114,8 @@ interface DBUserSummary {
   department: string;
   is_approved: boolean;
   lobby_access?: boolean;
+  version?: number;
+  updated_at?: string;
   requested_role?: "ADMIN" | "REVIEWER" | "CREATOR" | null;
   role_request_status?: "pending" | "approved" | "rejected" | null;
   role_request_note?: string | null;
@@ -136,12 +140,14 @@ export default function CollaborativeLobbyPage() {
     isSuperAdmin,
     refreshAccessStatus,
     requestRoleChange,
+    setPersonalDashboardOpen,
   } = useAuth();
   const { toast } = useToast();
 
   const [lobbies, setLobbies] = useState<ReviewLobbySession[]>([]);
   const [activeLobby, setActiveLobby] = useState<ReviewLobbySession | null>(null);
   const [employees, setEmployees] = useState<DBUserSummary[]>([]);
+  const isMutatingRef = useRef(false);
   const [joinCodeInput, setJoinCodeInput] = useState("");
   const [roomSearchQuery, setRoomSearchQuery] = useState("");
   const [nowMs, setNowMs] = useState<number>(() => Date.now());
@@ -231,34 +237,77 @@ export default function CollaborativeLobbyPage() {
     }
   }, []);
 
-  const fetchLobbiesAndUsers = useCallback(async () => {
-    try {
-      const query = new URLSearchParams({
-        user_id: user.id || "",
-        email: user.email || "",
-        security_role: user.securityRole || "",
-        role: user.role || "",
-      });
-      const [lobbyRes, pinsRes] = await Promise.all([
-        fetch(`/api/lobby?${query.toString()}`, { cache: "no-store" }),
-        fetch("/api/pins", { cache: "no-store" }),
-      ]);
-      if (lobbyRes.ok) {
-        const data = await lobbyRes.json();
-        if (Array.isArray(data)) {
-          setLobbies(data);
+  const fetchLobbiesAndUsers = useCallback(
+    async (force = false) => {
+      if (!force && isMutatingRef.current) return;
+      try {
+        const query = new URLSearchParams({
+          user_id: user.id || "",
+          email: user.email || "",
+          security_role: user.securityRole || "",
+          role: user.role || "",
+        });
+        const [lobbyRes, pinsRes] = await Promise.all([
+          fetch(`/api/lobby?${query.toString()}`, { cache: "no-store" }),
+          fetch("/api/pins", { cache: "no-store" }),
+        ]);
+        if (!force && isMutatingRef.current) return;
+        if (lobbyRes.ok) {
+          const data = await lobbyRes.json();
+          if (Array.isArray(data)) {
+            setLobbies((prev) => {
+              const prevMap = new Map(prev.map((r) => [r.room_code, r]));
+              return data.map((inc: ReviewLobbySession) => {
+                const cur = prevMap.get(inc.room_code);
+                if (!cur) return inc;
+                const curVer = typeof cur.version === "number" ? cur.version : 0;
+                const incVer = typeof inc.version === "number" ? inc.version : 0;
+                if (curVer > 0 && incVer < curVer) return cur;
+                if (
+                  curVer > 0 &&
+                  incVer === curVer &&
+                  cur.updated_at &&
+                  inc.updated_at &&
+                  inc.updated_at < cur.updated_at
+                ) {
+                  return cur;
+                }
+                return inc;
+              });
+            });
+          }
         }
-      }
-      if (pinsRes.ok) {
-        const secData = await pinsRes.json();
-        if (Array.isArray(secData.users)) {
-          setEmployees(secData.users);
+        if (pinsRes.ok) {
+          const secData = await pinsRes.json();
+          if (Array.isArray(secData.users)) {
+            setEmployees((prev) => {
+              const prevMap = new Map(prev.map((u) => [u.id, u]));
+              return secData.users.map((inc: DBUserSummary) => {
+                const cur = prevMap.get(inc.id);
+                if (!cur) return inc;
+                const curVer = typeof cur.version === "number" ? cur.version : 0;
+                const incVer = typeof inc.version === "number" ? inc.version : 0;
+                if (curVer > 0 && incVer < curVer) return cur;
+                if (
+                  curVer > 0 &&
+                  incVer === curVer &&
+                  cur.updated_at &&
+                  inc.updated_at &&
+                  inc.updated_at < cur.updated_at
+                ) {
+                  return cur;
+                }
+                return inc;
+              });
+            });
+          }
         }
+      } catch (e) {
+        console.error(e);
       }
-    } catch (e) {
-      console.error(e);
-    }
-  }, [user.email, user.id, user.role, user.securityRole]);
+    },
+    [user.email, user.id, user.role, user.securityRole]
+  );
 
   useEffect(() => {
     fetchLobbiesAndUsers();
@@ -568,6 +617,7 @@ export default function CollaborativeLobbyPage() {
     targetUserId: string,
     grantLobby: boolean
   ) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/access/grant", {
         method: "POST",
@@ -591,7 +641,7 @@ export default function CollaborativeLobbyPage() {
           description: data.message,
           variant: grantLobby ? "success" : "info",
         });
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
       } else {
@@ -603,6 +653,8 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
@@ -610,6 +662,7 @@ export default function CollaborativeLobbyPage() {
     targetUserId: string,
     newRole: "ADMIN" | "REVIEWER" | "CREATOR"
   ) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/access/grant", {
         method: "POST",
@@ -632,7 +685,7 @@ export default function CollaborativeLobbyPage() {
           description: data.message,
           variant: "success",
         });
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
         await refreshAccessStatus();
         window.dispatchEvent(new CustomEvent("brandlens-role-updated"));
       } else {
@@ -644,6 +697,8 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
@@ -667,7 +722,7 @@ export default function CollaborativeLobbyPage() {
           description: result.message,
           variant: "success",
         });
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
       } else {
         toast({
           title: "Request Failed",
@@ -684,6 +739,7 @@ export default function CollaborativeLobbyPage() {
     roomCode: string,
     grant: boolean
   ) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/lobby", {
         method: "POST",
@@ -705,7 +761,7 @@ export default function CollaborativeLobbyPage() {
             : `Lobby "${data.title}" has been suspended by Super Admin.`,
           variant: grant ? "success" : "info",
         });
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
       } else {
         toast({
           title: "Action Failed",
@@ -715,10 +771,13 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
   const handleSuperAdminDiscardLobby = async (roomCode: string, title: string) => {
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/lobby", {
         method: "POST",
@@ -737,7 +796,7 @@ export default function CollaborativeLobbyPage() {
           description: data.message || `Removed lobby "${title}".`,
           variant: "info",
         });
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
       } else {
         toast({
           title: "Cannot Discard Lobby",
@@ -747,6 +806,8 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
@@ -831,6 +892,7 @@ export default function CollaborativeLobbyPage() {
       return;
     }
 
+    isMutatingRef.current = true;
     try {
       const res = await fetch("/api/lobby", {
         method: "POST",
@@ -856,7 +918,7 @@ export default function CollaborativeLobbyPage() {
           description: `Connected to "${data.title}".`,
           variant: "success",
         });
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
       } else {
         toast({
           title: "Lobby Access Blocked",
@@ -867,12 +929,15 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
   const handleCreateLobby = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newRoomTitle.trim() || isSuperAdmin) return;
+    isMutatingRef.current = true;
     try {
       const recipientToSend = (newRoomRecipientEmail || user.email || "").trim();
       let activeToken = (await getAccessToken()) || googleToken;
@@ -937,7 +1002,7 @@ export default function CollaborativeLobbyPage() {
             otpType: "lobby_pin",
           });
         }
-        await fetchLobbiesAndUsers();
+        await fetchLobbiesAndUsers(true);
       } else {
         toast({
           title: "Cannot Create Lobby",
@@ -947,6 +1012,8 @@ export default function CollaborativeLobbyPage() {
       }
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "error" });
+    } finally {
+      isMutatingRef.current = false;
     }
   };
 
@@ -1170,32 +1237,20 @@ export default function CollaborativeLobbyPage() {
                 </span>
               )}
               <span className="text-xs text-ink-500">
-                Need a different role (e.g., Admin to create rooms)? Request a role change from Super Admin:
+                Role change requests are managed exclusively in your Personal Dashboard.
               </span>
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
-              <select
-                value={desiredRole}
-                onChange={(e) =>
-                  setDesiredRole(e.target.value as "ADMIN" | "REVIEWER" | "CREATOR")
-                }
-                className="h-8 rounded-xl border border-line bg-white px-2.5 text-xs font-semibold text-ink-900 focus:outline-none focus:ring-2 focus:ring-purple-500"
-              >
-                <option value="ADMIN">Request: Admin</option>
-                <option value="REVIEWER">Request: Manager / Reviewer</option>
-                <option value="CREATOR">Request: Creator</option>
-              </select>
               <Button
                 type="button"
                 size="sm"
                 variant="secondary"
-                disabled={submittingRoleReq}
-                onClick={handleRequestRoleFromLobby}
+                onClick={() => setPersonalDashboardOpen(true)}
                 className="!border-purple-200 !bg-purple-50 !text-purple-800 hover:!bg-purple-100"
               >
                 <ArrowUpRight className="h-3.5 w-3.5" />
-                {submittingRoleReq ? "Sending..." : "Request Role Change"}
+                Open Personal Dashboard
               </Button>
             </div>
           </div>

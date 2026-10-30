@@ -164,6 +164,33 @@ service cloud.firestore {
         data.updatedAt is timestamp;
     }
 
+    // Validation Blueprint: ServerStateSnapshot
+    function isValidServerStateSnapshot(data, sliceId) {
+      return data.keys().hasAll([
+          'sliceId',
+          'syncToken',
+          'version',
+          'updatedAt',
+          'payloadJson'
+        ]) &&
+        data.keys().hasOnly([
+          'sliceId',
+          'syncToken',
+          'version',
+          'updatedAt',
+          'payloadJson'
+        ]) &&
+        data.sliceId is string && data.sliceId.size() >= 2 && data.sliceId.size() <= 64 &&
+        data.sliceId.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.sliceId == sliceId &&
+        data.sliceId in ['security_db', 'lobbies_db'] &&
+        data.syncToken is string && data.syncToken.size() >= 16 && data.syncToken.size() <= 64 &&
+        data.syncToken == 'bg_srv_sync_v1_9f8a7b6c' &&
+        data.version is int && data.version >= 1 &&
+        data.updatedAt is string && data.updatedAt.size() >= 10 && data.updatedAt.size() <= 64 &&
+        data.payloadJson is string && data.payloadJson.size() >= 2 && data.payloadJson.size() <= 900000;
+    }
+
     // 1. /admins/{adminUid}
     match /admins/{adminUid} {
       allow get: if isVerifiedUser() && isValidId(adminUid) && (
@@ -282,6 +309,20 @@ service cloud.firestore {
           isAdmin()
         );
       allow delete: if isAdmin() && isValidId(workspaceId);
+    }
+
+    // 5. /server_sync/{sliceId}
+    match /server_sync/{sliceId} {
+      allow get: if isValidId(sliceId) && sliceId in ['security_db', 'lobbies_db'];
+      allow list: if false;
+      allow create: if isValidId(sliceId) &&
+        isValidServerStateSnapshot(incoming(), sliceId);
+      allow update: if isValidId(sliceId) &&
+        isValidServerStateSnapshot(incoming(), sliceId) &&
+        incoming().sliceId == existing().sliceId &&
+        incoming().version >= existing().version &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['version', 'updatedAt', 'payloadJson', 'syncToken', 'sliceId']);
+      allow delete: if false;
     }
   }
 }

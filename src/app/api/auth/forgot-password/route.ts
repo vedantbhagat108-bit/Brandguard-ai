@@ -5,6 +5,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const { identifier, username, email, new_password } = body;
     const targetId = (identifier || username || email || '').trim();
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
     }
 
     const updatedUser = securityDB.resetUserPassword(targetId, new_password);
+    await securityDB.saveToCloud();
     const workspace = securityDB.workspaces.get(updatedUser.brand_id);
 
     const token = createAccessToken({
@@ -38,9 +40,12 @@ export async function POST(req: NextRequest) {
         name: updatedUser.name,
         role: updatedUser.role,
         brand_id: updatedUser.brand_id,
-        brand_name: workspace?.name || 'EcoFresh Botanicals',
+        brand_name: updatedUser.brand_name || workspace?.name || 'Default Workspace',
         department: updatedUser.department,
         is_approved: updatedUser.is_approved,
+        lobby_access: updatedUser.lobby_access !== false,
+        version: updatedUser.version || 1,
+        updated_at: updatedUser.updated_at || updatedUser.created_at,
       },
     });
   } catch (err: any) {

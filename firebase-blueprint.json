@@ -205,6 +205,44 @@
         }
       },
       "required": ["workspaceId", "ownerUid", "brand_name", "status", "createdAt", "updatedAt"]
+    },
+    "ServerStateSnapshot": {
+      "title": "ServerStateSnapshot",
+      "description": "Authoritative server state snapshot shared across serverless instances for RBAC users, workspaces, pins, and review lobbies.",
+      "type": "object",
+      "properties": {
+        "sliceId": {
+          "type": "string",
+          "enum": ["security_db", "lobbies_db"],
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "State slice identifier."
+        },
+        "syncToken": {
+          "type": "string",
+          "minLength": 16,
+          "maxLength": 64,
+          "description": "Server-side write verification token."
+        },
+        "version": {
+          "type": "integer",
+          "description": "Monotonically increasing state version."
+        },
+        "updatedAt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 64,
+          "description": "ISO timestamp of last state mutation."
+        },
+        "payloadJson": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 900000,
+          "description": "Serialized authoritative state slice."
+        }
+      },
+      "required": ["sliceId", "syncToken", "version", "updatedAt", "payloadJson"]
     }
   },
   "firestore": {
@@ -223,6 +261,10 @@
     "/workspaces/{workspaceId}": {
       "schema": { "$ref": "#/entities/WorkspaceSyncDoc" },
       "description": "Cross-device brand workspace synchronization records."
+    },
+    "/server_sync/{sliceId}": {
+      "schema": { "$ref": "#/entities/ServerStateSnapshot" },
+      "description": "Authoritative server-side state synchronization across serverless instances."
     }
   }
 }

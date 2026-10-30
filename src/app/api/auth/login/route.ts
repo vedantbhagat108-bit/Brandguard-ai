@@ -9,6 +9,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const { identifier, email, username, password } = body;
     const loginId = (identifier || username || email || '').trim();
@@ -52,6 +53,8 @@ export async function POST(req: NextRequest) {
       details: { username: user.username, email: user.email, role: user.role },
     });
 
+    await securityDB.saveToCloud();
+
     const workspace = securityDB.workspaces.get(user.brand_id);
 
     return NextResponse.json({
@@ -68,6 +71,12 @@ export async function POST(req: NextRequest) {
         department: user.department,
         is_approved: user.is_approved,
         lobby_access: typeof user.lobby_access === 'boolean' ? user.lobby_access : true,
+        version: user.version || 1,
+        updated_at: user.updated_at || user.created_at,
+        requested_role: user.requested_role || null,
+        role_request_status: user.role_request_status || null,
+        role_request_note: user.role_request_note || null,
+        role_request_at: user.role_request_at || null,
       },
     });
   } catch (err: any) {

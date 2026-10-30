@@ -1,4 +1,5 @@
 {
+  "dbVersion": 39,
   "workspaces": [
     [
       "b0000000-0000-4000-8000-000000000000",
@@ -6,7 +7,9 @@
         "id": "b0000000-0000-4000-8000-000000000000",
         "name": "Global Governance",
         "brand_name": "Global Governance",
-        "created_at": "2026-10-29T18:54:41.088Z"
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "version": 1
       }
     ],
     [
@@ -15,7 +18,10 @@
         "id": "b0000001-0000-4000-8000-000000000001",
         "name": "Default Workspace",
         "brand_name": "Default Workspace",
-        "created_at": "2026-10-29T18:54:41.088Z"
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "updated_at": "2026-01-01T00:00:00.000Z",
+        "version": 1,
+        "is_demo": true
       }
     ],
     [
@@ -70,7 +76,9 @@
         "department": "Platform Governance",
         "is_approved": true,
         "lobby_access": true,
-        "created_at": "2026-10-29T18:54:41.089Z"
+        "created_at": "2026-10-29T18:54:41.089Z",
+        "version": 1,
+        "updated_at": "2026-10-29T18:54:41.089Z"
       }
     ],
     [
@@ -87,7 +95,14 @@
         "department": "Marketing",
         "is_approved": true,
         "lobby_access": true,
-        "created_at": "2026-10-29T18:54:41.089Z"
+        "created_at": "2026-10-29T18:54:41.089Z",
+        "updated_at": "2026-10-30T16:54:40.248Z",
+        "version": 3,
+        "is_demo": true,
+        "requested_role": null,
+        "role_request_status": null,
+        "role_request_note": null,
+        "role_request_at": null
       }
     ],
     [
@@ -106,7 +121,9 @@
         "lobby_access": true,
         "created_at": "2026-10-29T18:54:41.089Z",
         "requested_role": null,
-        "role_request_status": "approved"
+        "role_request_status": "approved",
+        "version": 1,
+        "updated_at": "2026-10-29T18:54:41.089Z"
       }
     ],
     [
@@ -123,7 +140,14 @@
         "department": "Marketing",
         "is_approved": true,
         "lobby_access": true,
-        "created_at": "2026-10-30T09:34:23.847Z"
+        "created_at": "2026-10-30T09:34:23.847Z",
+        "updated_at": "2026-10-30T16:54:40.248Z",
+        "version": 3,
+        "is_demo": true,
+        "requested_role": null,
+        "role_request_status": null,
+        "role_request_note": null,
+        "role_request_at": null
       }
     ],
     [
@@ -140,7 +164,14 @@
         "department": "Compliance",
         "is_approved": true,
         "lobby_access": true,
-        "created_at": "2026-10-30T09:34:23.847Z"
+        "created_at": "2026-10-30T09:34:23.847Z",
+        "updated_at": "2026-10-30T16:54:40.248Z",
+        "version": 3,
+        "is_demo": true,
+        "requested_role": null,
+        "role_request_status": null,
+        "role_request_note": null,
+        "role_request_at": null
       }
     ],
     [
@@ -159,7 +190,9 @@
         "lobby_access": true,
         "created_at": "2026-10-30T09:34:42.920Z",
         "requested_role": null,
-        "role_request_status": "approved"
+        "role_request_status": "approved",
+        "version": 1,
+        "updated_at": "2026-10-30T09:34:42.920Z"
       }
     ],
     [
@@ -178,7 +211,31 @@
         "lobby_access": true,
         "created_at": "2026-10-30T09:36:45.492Z",
         "requested_role": null,
-        "role_request_status": "approved"
+        "role_request_status": "approved",
+        "version": 1,
+        "updated_at": "2026-10-30T09:36:45.492Z"
+      }
+    ],
+    [
+      "u1111111-real-employee",
+      {
+        "id": "u1111111-real-employee",
+        "username": "creator",
+        "email": "creator@brandguard.ai",
+        "hashed_password": "session_user",
+        "role": "CREATOR",
+        "brand_id": "b0000001-0000-4000-8000-000000000001",
+        "brand_name": "Default Workspace",
+        "name": "creator",
+        "department": "Marketing",
+        "is_approved": true,
+        "lobby_access": true,
+        "created_at": "2026-10-30T16:53:49.539Z",
+        "updated_at": "2026-10-30T16:54:41.878Z",
+        "version": 7,
+        "requested_role": null,
+        "role_request_status": "approved",
+        "firebase_uid": "firebase-uid-test-999"
       }
     ]
   ],
@@ -203,6 +260,190 @@
   "guidelines": [],
   "submissions": [],
   "auditLogs": [
+    {
+      "id": "56b9b733-aa05-4aa4-9923-d34be511d367",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "actor_id": "u0000000-super-admin",
+        "actor_email": "admin@gmail.com",
+        "target_user_id": "u1111111-real-employee",
+        "target_user": "creator@brandguard.ai",
+        "access_status": "approved",
+        "lobby_access": "GRANTED",
+        "version": 7,
+        "timestamp": "2026-10-30T16:54:41.878Z"
+      },
+      "details_text": "actor_id: u0000000-super-admin · actor_email: admin@gmail.com · target_user_id: u1111111-real-employee · target_user: creator@brandguard.ai · access_status: approved · lobby_access: GRANTED · version: 7 · timestamp: 2026-10-30T16:54:41.878Z",
+      "timestamp": "2026-10-30T16:54:41.878Z"
+    },
+    {
+      "id": "6047bf56-6ab8-4e70-940d-6f05ff738d02",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "actor_id": "u0000000-super-admin",
+        "actor_email": "admin@gmail.com",
+        "target_user_id": "u1111111-real-employee",
+        "target_user": "creator@brandguard.ai",
+        "username": "creator",
+        "previous_role": "ADMIN",
+        "new_role": "CREATOR",
+        "version": 6,
+        "updated_by": "admin@gmail.com",
+        "timestamp": "2026-10-30T16:54:41.876Z"
+      },
+      "details_text": "actor_id: u0000000-super-admin · actor_email: admin@gmail.com · target_user_id: u1111111-real-employee · target_user: creator@brandguard.ai · username: creator · previous_role: ADMIN · new_role: CREATOR · version: 6 · updated_by: admin@gmail.com · timestamp: 2026-10-30T16:54:41.876Z",
+      "timestamp": "2026-10-30T16:54:41.877Z"
+    },
+    {
+      "id": "633ca71b-d144-484e-baf2-8919253ac7dd",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "summary": "Super Admin discarded lobby #889427 (Phase 3 Verification Room)",
+        "room_code": "889427"
+      },
+      "details_text": "Super Admin discarded lobby #889427 (Phase 3 Verification Room)",
+      "timestamp": "2026-10-30T16:54:41.636Z"
+    },
+    {
+      "id": "91f90359-41bc-40d9-8e4e-cb88395209fa",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u1111111-real-employee",
+      "user_email": "creator@brandguard.ai",
+      "ip_address": "127.0.0.1",
+      "action": "LOBBY_CREATED",
+      "details": {
+        "room_code": "889427",
+        "title": "Phase 3 Verification Room",
+        "created_by": "Alex Rivera",
+        "otp_email_delivered": false
+      },
+      "details_text": "room_code: 889427 · title: Phase 3 Verification Room · created_by: Alex Rivera · otp_email_delivered: false",
+      "timestamp": "2026-10-30T16:54:41.028Z"
+    },
+    {
+      "id": "726fca03-b7ba-48ec-8920-6d2247a45cb0",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "summary": "Reset demo accounts only (real accounts and workspaces preserved)",
+        "reset_accounts": "demo@gmail.com (CREATOR), demoadmin@gmail.com (ADMIN), demo@t1.in (ADMIN)"
+      },
+      "details_text": "Reset demo accounts only (real accounts and workspaces preserved)",
+      "timestamp": "2026-10-30T16:54:40.249Z"
+    },
+    {
+      "id": "67dbcee6-bb83-4875-af77-a00748f359a8",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "actor_id": "u0000000-super-admin",
+        "actor_email": "admin@gmail.com",
+        "target_user_id": "u1111111-real-employee",
+        "target_user": "creator@brandguard.ai",
+        "access_status": "approved",
+        "lobby_access": "GRANTED",
+        "version": 5,
+        "timestamp": "2026-10-30T16:54:39.662Z"
+      },
+      "details_text": "actor_id: u0000000-super-admin · actor_email: admin@gmail.com · target_user_id: u1111111-real-employee · target_user: creator@brandguard.ai · access_status: approved · lobby_access: GRANTED · version: 5 · timestamp: 2026-10-30T16:54:39.662Z",
+      "timestamp": "2026-10-30T16:54:39.662Z"
+    },
+    {
+      "id": "d224ee29-362d-453b-a9f7-75994c5c1c18",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "actor_id": "u0000000-super-admin",
+        "actor_email": "admin@gmail.com",
+        "target_user_id": "u1111111-real-employee",
+        "target_user": "creator@brandguard.ai",
+        "username": "creator",
+        "previous_role": "ADMIN",
+        "new_role": "ADMIN",
+        "version": 4,
+        "updated_by": "admin@gmail.com",
+        "timestamp": "2026-10-30T16:54:39.660Z"
+      },
+      "details_text": "actor_id: u0000000-super-admin · actor_email: admin@gmail.com · target_user_id: u1111111-real-employee · target_user: creator@brandguard.ai · username: creator · previous_role: ADMIN · new_role: ADMIN · version: 4 · updated_by: admin@gmail.com · timestamp: 2026-10-30T16:54:39.660Z",
+      "timestamp": "2026-10-30T16:54:39.661Z"
+    },
+    {
+      "id": "8b4cc64e-66ac-4399-9f5b-b97c18b1b64e",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "summary": "Reset demo accounts only (real accounts and workspaces preserved)",
+        "reset_accounts": "demo@gmail.com (CREATOR), demoadmin@gmail.com (ADMIN), demo@t1.in (ADMIN)"
+      },
+      "details_text": "Reset demo accounts only (real accounts and workspaces preserved)",
+      "timestamp": "2026-10-30T16:53:51.147Z"
+    },
+    {
+      "id": "6b77bec8-3024-45a6-a675-63a1434e32a4",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "STATUS_UPDATED",
+      "details": {
+        "actor_id": "u0000000-super-admin",
+        "actor_email": "admin@gmail.com",
+        "target_user_id": "u1111111-real-employee",
+        "target_user": "creator@brandguard.ai",
+        "access_status": "approved",
+        "lobby_access": "GRANTED",
+        "version": 3,
+        "timestamp": "2026-10-30T16:53:49.861Z"
+      },
+      "details_text": "actor_id: u0000000-super-admin · actor_email: admin@gmail.com · target_user_id: u1111111-real-employee · target_user: creator@brandguard.ai · access_status: approved · lobby_access: GRANTED · version: 3 · timestamp: 2026-10-30T16:53:49.861Z",
+      "timestamp": "2026-10-30T16:53:49.861Z"
+    },
+    {
+      "id": "0c4994a5-7153-470d-b46c-63f0c030b905",
+      "brand_id": "b0000001-0000-4000-8000-000000000001",
+      "user_id": "u0000000-super-admin",
+      "user_email": "admin@gmail.com",
+      "ip_address": "127.0.0.1",
+      "action": "ROLE_UPDATED",
+      "details": {
+        "actor_id": "u0000000-super-admin",
+        "actor_email": "admin@gmail.com",
+        "target_user_id": "u1111111-real-employee",
+        "target_user": "creator@brandguard.ai",
+        "username": "creator",
+        "previous_role": "CREATOR",
+        "new_role": "ADMIN",
+        "version": 2,
+        "updated_by": "admin@gmail.com",
+        "timestamp": "2026-10-30T16:53:49.859Z"
+      },
+      "details_text": "actor_id: u0000000-super-admin · actor_email: admin@gmail.com · target_user_id: u1111111-real-employee · target_user: creator@brandguard.ai · username: creator · previous_role: CREATOR · new_role: ADMIN · version: 2 · updated_by: admin@gmail.com · timestamp: 2026-10-30T16:53:49.859Z",
+      "timestamp": "2026-10-30T16:53:49.860Z"
+    },
     {
       "id": "5d32fd68-eb68-47f2-a4c0-08878bc6aff5",
       "brand_id": "ws_ef335ff6-00cd-4b68-ad12-9969e1518a9f",

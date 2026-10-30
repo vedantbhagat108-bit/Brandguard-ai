@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { securityDB } from '@/backend/database.ts';
 import { backendReviewStore } from '@/backend/reviewStore.ts';
-import { deleteLobbiesForUser, listLobbiesForUser } from '@/backend/lobby.ts';
+import {
+  deleteLobbiesForUser,
+  listLobbiesForUser,
+  syncLobbiesFromCloud,
+  saveLobbiesToCloud,
+} from '@/backend/lobby.ts';
 
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   try {
+    await Promise.all([securityDB.syncFromCloud(), syncLobbiesFromCloud()]);
     const { searchParams } = new URL(req.url);
     const userId = searchParams.get('userId') || searchParams.get('user_id') || '';
     const email = searchParams.get('email') || '';
@@ -15,7 +21,6 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'User identifier or email required' }, { status: 400 });
     }
 
-    securityDB.loadFromDisk();
     const user =
       (userId ? securityDB.findUserByIdOrIdentifier(userId) : undefined) ||
       (email ? securityDB.findUserByEmail(email) : undefined);
@@ -55,6 +60,8 @@ export async function GET(req: NextRequest) {
             is_approved: user.is_approved,
             lobby_access: user.lobby_access,
             created_at: user.created_at,
+            updated_at: user.updated_at || user.created_at,
+            version: user.version || 1,
             requested_role: user.requested_role || null,
             role_request_status: user.role_request_status || null,
             role_request_note: user.role_request_note || null,
@@ -76,6 +83,8 @@ export async function GET(req: NextRequest) {
         room_code: l.room_code,
         title: l.title,
         created_at: l.created_at,
+        updated_at: l.updated_at || l.created_at,
+        version: l.version || 1,
         created_by: l.created_by,
         created_by_email: l.created_by_email,
         status: l.status,
@@ -96,6 +105,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json();
     const { userId, email, name, department, brand_name } = body;
 
@@ -114,6 +124,8 @@ export async function PATCH(req: NextRequest) {
       brand_name,
     });
 
+    await securityDB.saveToCloud();
+
     return NextResponse.json({
       success: true,
       user: {
@@ -127,6 +139,8 @@ export async function PATCH(req: NextRequest) {
         brand_name: updated.brand_name || 'Default Workspace',
         is_approved: updated.is_approved,
         lobby_access: updated.lobby_access,
+        version: updated.version || 1,
+        updated_at: updated.updated_at,
         requested_role: updated.requested_role || null,
         role_request_status: updated.role_request_status || null,
       },
@@ -142,6 +156,7 @@ export async function PATCH(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await Promise.all([securityDB.syncFromCloud(true), syncLobbiesFromCloud(true)]);
     const body = await req.json();
     const { action, userId, email, scope } = body;
 
@@ -173,6 +188,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      await Promise.all([securityDB.saveToCloud(), saveLobbiesToCloud()]);
+
       return NextResponse.json({
         success: true,
         scope,
@@ -189,6 +206,8 @@ export async function POST(req: NextRequest) {
       const deletedReviews = backendReviewStore.deleteReviewsForUser(userId, email);
       const deletedLobbies = deleteLobbiesForUser(userId, email);
       const userDeleted = securityDB.deleteUserAccount(identifier);
+
+      await Promise.all([securityDB.saveToCloud(), saveLobbiesToCloud()]);
 
       if (!userDeleted) {
         return NextResponse.json(

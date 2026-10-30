@@ -13,6 +13,8 @@ import {
   resolveLobbyJoinRequest,
   requestOtp,
   sanitizeLobbyForClient,
+  syncLobbiesFromCloud,
+  saveLobbiesToCloud,
 } from '@/backend/lobby.ts';
 import { securityDB } from '@/backend/database.ts';
 import { UserRole } from '@/backend/types.ts';
@@ -20,6 +22,7 @@ import { UserRole } from '@/backend/types.ts';
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
+  await Promise.all([securityDB.syncFromCloud(), syncLobbiesFromCloud()]);
   const { searchParams } = new URL(req.url);
   const code = searchParams.get('code') || searchParams.get('room_code');
   const userId = searchParams.get('user_id');
@@ -47,6 +50,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await Promise.all([securityDB.syncFromCloud(true), syncLobbiesFromCloud(true)]);
     const body = await req.json();
     const {
       action = 'create',
@@ -99,13 +103,12 @@ export async function POST(req: NextRequest) {
         ? 'authorised_reviewer'
         : 'content_creator';
 
-    securityDB.loadFromDisk();
     const dbUser =
       securityDB.findUserByIdOrIdentifier(actorId) ||
       securityDB.findUserByIdOrIdentifier(email);
 
     const effectiveSecurityRole =
-      security_role || dbUser?.role || (rawRole === 'ADMIN' ? 'ADMIN' : undefined);
+      dbUser?.role || security_role || (rawRole === 'ADMIN' ? 'ADMIN' : undefined);
 
     // Super Admin actions: discard_lobby & set_lobby_permission
     if (action === 'discard_lobby') {
@@ -132,6 +135,7 @@ export async function POST(req: NextRequest) {
           room_code: targetCode,
         },
       });
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
       return NextResponse.json({
         ok: true,
         message: `Discarded lobby "${discarded.title}".`,
@@ -164,6 +168,7 @@ export async function POST(req: NextRequest) {
           permission_granted: granted,
         },
       });
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
       return NextResponse.json(sanitizeLobbyForClient(updated));
     }
 
@@ -201,6 +206,7 @@ export async function POST(req: NextRequest) {
           google_access_token: effectiveGoogleToken,
           sender_name: actorName,
         });
+        await saveLobbiesToCloud();
         if (!regenRes.delivered) {
           return NextResponse.json(
             {
@@ -281,6 +287,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
+
       return NextResponse.json({
         ok: true,
         message: `Join request sent to Admin (${lobby.created_by}). Once the Admin accepts your request, you can enter directly or join via the Manager's Joining Code.`,
@@ -314,6 +322,8 @@ export async function POST(req: NextRequest) {
           room_code: targetCode,
         },
       });
+
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
 
       return NextResponse.json({
         ok: true,
@@ -352,6 +362,8 @@ export async function POST(req: NextRequest) {
         },
       });
 
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
+
       return NextResponse.json(
         {
           ...sanitizeLobbyForClient(lobby),
@@ -387,6 +399,8 @@ export async function POST(req: NextRequest) {
         details: { room_code: lobby.room_code, participant: actorName, role: normalizedRole },
       });
 
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
+
       return NextResponse.json(sanitizeLobbyForClient(lobby));
     }
 
@@ -420,6 +434,8 @@ export async function POST(req: NextRequest) {
           details: { room_code: targetCode, approved_by: actorName },
         });
       }
+
+      await Promise.all([saveLobbiesToCloud(), securityDB.saveToCloud()]);
 
       return NextResponse.json(sanitizeLobbyForClient(updated));
     }

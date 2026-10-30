@@ -39,6 +39,8 @@ export interface UserAccount {
   status: "approved" | "pending" | "revoked";
   initials: string;
   token?: string;
+  version?: number;
+  updatedAt?: string;
   requestedRole?: "ADMIN" | "REVIEWER" | "CREATOR" | null;
   roleRequestStatus?: "pending" | "approved" | "rejected" | null;
   roleRequestNote?: string | null;
@@ -60,6 +62,8 @@ const DEFAULT_GUEST_USER: UserAccount = {
   lobbyAccess: true,
   status: "approved",
   initials: "WU",
+  version: 0,
+  updatedAt: undefined,
   requestedRole: null,
   roleRequestStatus: null,
 };
@@ -245,6 +249,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       status: isApproved ? "approved" : "pending",
       initials,
       token,
+      version: typeof apiUser.version === "number" ? apiUser.version : 1,
+      updatedAt: apiUser.updated_at || apiUser.created_at || undefined,
       requestedRole: apiUser.requested_role || null,
       roleRequestStatus: apiUser.role_request_status || null,
       roleRequestNote: apiUser.role_request_note || null,
@@ -252,6 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  // Strictly READ-ONLY sync: pulls authoritative state from server, respects version/updatedAt, and NEVER writes back to Firestore or triggers storage write loops.
   const refreshAccessStatus = useCallback(async () => {
     const currentUser = userRef.current;
     if (!currentUser.id && !currentUser.email) return;
@@ -311,6 +318,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             : true;
         const status = data.grant?.status || (isApproved ? "approved" : "pending");
         const roleLabel = getRoleLabel(resolvedSecurityRole, isApproved);
+        const incomingVer =
+          typeof apiUser?.version === "number"
+            ? apiUser.version
+            : typeof data.version === "number"
+            ? data.version
+            : 1;
+        const incomingUpdatedAt = apiUser?.updated_at || data.updated_at || undefined;
 
         setUser((prev) => {
           // Double-check active account hasn't switched
@@ -318,6 +332,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             currentEmail &&
             prev.email &&
             prev.email.toLowerCase() !== currentEmail
+          ) {
+            return prev;
+          }
+
+          // Reject stale out-of-order responses based on version and updatedAt
+          const localVer = typeof prev.version === "number" ? prev.version : 0;
+          if (localVer > 0 && incomingVer < localVer) {
+            return prev;
+          }
+          if (
+            localVer > 0 &&
+            incomingVer === localVer &&
+            prev.updatedAt &&
+            incomingUpdatedAt &&
+            incomingUpdatedAt < prev.updatedAt
           ) {
             return prev;
           }
@@ -347,6 +376,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             prev.isApproved !== isApproved ||
             prev.lobbyAccess !== lobbyAccess ||
             prev.status !== status ||
+            prev.version !== incomingVer ||
+            prev.updatedAt !== incomingUpdatedAt ||
             prev.requestedRole !== targetRequestedRole ||
             prev.roleRequestStatus !== targetRoleReqStatus ||
             prev.roleRequestNote !== targetRoleReqNote ||
@@ -370,6 +401,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             isApproved,
             lobbyAccess,
             status,
+            version: incomingVer,
+            updatedAt: incomingUpdatedAt || prev.updatedAt,
             requestedRole: targetRequestedRole,
             roleRequestStatus: targetRoleReqStatus,
             roleRequestNote: targetRoleReqNote,
@@ -377,14 +410,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           };
           try {
             localStorage.setItem(STORAGE_AUTH_KEY, JSON.stringify(updated));
-          } catch {}
-          if (
-            auth.currentUser &&
-            auth.currentUser.email &&
-            updated.email &&
-            auth.currentUser.email.toLowerCase() === updated.email.toLowerCase()
-          ) {
-            void syncAccountToFirestore(updated);
+          } catch {
+            // ignore storage errors
           }
           return updated;
         });
@@ -392,9 +419,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (e) {
       console.warn("Failed to refresh access status:", e);
     }
-  }, []);
+  }, [logout]);
 
-  // Real-time role & permission synchronization: poll on focus + interval (2s) + on custom event + cross-tab storage event
+  // Read-only role & permission synchronization: poll on focus + interval + custom event.
+  // Cross-tab storage events update display only and NEVER trigger writes.
   useEffect(() => {
     if (!isAuthenticated || !user.email) return;
 
@@ -402,13 +430,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const interval = window.setInterval(() => {
       void refreshAccessStatus();
-    }, 2000);
+    }, 2500);
 
     const handleFocus = () => void refreshAccessStatus();
     const handleRoleEvent = () => void refreshAccessStatus();
     const handleStorageEvent = (e: StorageEvent) => {
-      if (e.key === STORAGE_AUTH_KEY || e.key === "brandlens-role-updated-ts") {
-        void refreshAccessStatus();
+      // Display-only cross-tab update: never write back to localStorage or Firestore
+      if (e.key === STORAGE_AUTH_KEY && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue) as UserAccount;
+          if (parsed && parsed.email) {
+            setUser((prev) => {
+              if (
+                prev.email &&
+                parsed.email.toLowerCase() !== prev.email.toLowerCase()
+              ) {
+                return prev;
+              }
+              const inVer = typeof parsed.version === "number" ? parsed.version : 1;
+              const curVer = typeof prev.version === "number" ? prev.version : 0;
+              if (inVer >= curVer) {
+                return parsed;
+              }
+              return prev;
+            });
+          }
+        } catch {}
       }
     };
 

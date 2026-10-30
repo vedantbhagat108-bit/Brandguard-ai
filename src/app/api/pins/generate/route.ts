@@ -9,6 +9,7 @@ export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
     const body = await req.json().catch(() => ({}));
     const { brand_id, prefix = 'PIN' } = body;
 
@@ -19,7 +20,7 @@ export async function POST(req: NextRequest) {
     if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
       try {
         const payload = decodeAccessToken(authHeader.slice(7).trim());
-        adminUser = securityDB.users.get(payload.sub);
+        adminUser = securityDB.findUserByIdOrIdentifier(payload.sub);
       } catch {
         return NextResponse.json(
           { detail: 'Could not validate authentication credentials or token has expired' },
@@ -34,21 +35,24 @@ export async function POST(req: NextRequest) {
         ''
       ).toUpperCase();
       const userIdHeader = req.headers.get('x-user-id');
-      if (userIdHeader && securityDB.users.has(userIdHeader)) {
-        adminUser = securityDB.users.get(userIdHeader);
-      } else if (
-        roleHeader === 'SUPER_ADMIN' ||
-        roleHeader === 'ADMIN' ||
-        roleHeader === 'MANAGER'
-      ) {
-        adminUser = securityDB.findUserByEmail('admin@gmail.com');
-      } else if (roleHeader) {
-        return NextResponse.json(
-          { detail: `Access denied: Operation requires ADMIN or SUPER_ADMIN role. Current role: ${roleHeader}` },
-          { status: 403 }
-        );
-      } else {
-        adminUser = securityDB.findUserByEmail('admin@gmail.com');
+      if (userIdHeader) {
+        adminUser = securityDB.findUserByIdOrIdentifier(userIdHeader);
+      }
+      if (!adminUser) {
+        if (
+          roleHeader === 'SUPER_ADMIN' ||
+          roleHeader === 'ADMIN' ||
+          roleHeader === 'MANAGER'
+        ) {
+          adminUser = securityDB.findUserByEmail('admin@gmail.com');
+        } else if (roleHeader) {
+          return NextResponse.json(
+            { detail: `Access denied: Operation requires ADMIN or SUPER_ADMIN role. Current role: ${roleHeader}` },
+            { status: 403 }
+          );
+        } else {
+          adminUser = securityDB.findUserByEmail('admin@gmail.com');
+        }
       }
     }
 
@@ -67,11 +71,15 @@ export async function POST(req: NextRequest) {
       prefix,
     });
 
+    await securityDB.saveToCloud();
+
     return NextResponse.json(
       {
         pin_code: newPin.pin_code,
         expires_at: newPin.expires_at,
         brand_id: newPin.brand_id,
+        version: newPin.version || 1,
+        updated_at: newPin.updated_at || newPin.created_at,
       },
       { status: 201 }
     );

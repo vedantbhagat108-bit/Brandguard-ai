@@ -10,12 +10,15 @@ import {
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
-  securityDB.loadFromDisk();
+  await securityDB.syncFromCloud();
   const { searchParams } = new URL(req.url);
   const brandId = searchParams.get('brand_id');
 
   // Deduplicate workspaces by id
-  const uniqueWorkspacesMap = new Map<string, { id: string; name: string; brand_name: string; created_at: string }>();
+  const uniqueWorkspacesMap = new Map<
+    string,
+    { id: string; name: string; brand_name: string; created_at: string; is_demo?: boolean }
+  >();
   for (const ws of securityDB.workspaces.values()) {
     if (!uniqueWorkspacesMap.has(ws.id)) {
       uniqueWorkspacesMap.set(ws.id, {
@@ -23,6 +26,7 @@ export async function GET(req: NextRequest) {
         name: ws.name,
         brand_name: ws.name,
         created_at: ws.created_at,
+        is_demo: ws.is_demo,
       });
     }
   }
@@ -47,6 +51,7 @@ export async function GET(req: NextRequest) {
 
   const users = Array.from(securityDB.users.values()).map((u) => ({
     id: u.id,
+    firebase_uid: u.firebase_uid || null,
     username: u.username,
     email: u.email,
     name: u.name,
@@ -57,6 +62,9 @@ export async function GET(req: NextRequest) {
     is_approved: u.is_approved,
     lobby_access: typeof u.lobby_access === 'boolean' ? u.lobby_access : true,
     created_at: u.created_at,
+    updated_at: u.updated_at || u.created_at,
+    version: u.version || 1,
+    is_demo: Boolean(u.is_demo),
     password_updated_at: u.password_updated_at || null,
     requested_role: u.requested_role || null,
     role_request_status: u.role_request_status || null,
@@ -70,6 +78,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json({
+    db_version: securityDB.dbVersion,
     workspaces,
     pins,
     users,
@@ -79,9 +88,29 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await securityDB.syncFromCloud(true);
+    const body = await req.json().catch(() => ({}));
+
+    if (body.action === 'reset_demo_data') {
+      const actorId =
+        body.user_id || body.userId || req.headers.get('x-user-id') || 'u0000000-super-admin';
+      const resetUsers = securityDB.resetDemoDataOnly(actorId);
+      await securityDB.saveToCloud();
+      return NextResponse.json({
+        success: true,
+        reset_users: resetUsers.map((u) => ({
+          id: u.id,
+          email: u.email,
+          role: u.role,
+          version: u.version,
+          updated_at: u.updated_at,
+        })),
+        message: 'Demo accounts reset without affecting real users or workspaces.',
+      });
+    }
+
     pinIpLimiter.checkRateLimit(req);
 
-    const body = await req.json().catch(() => ({}));
     const { pin_code, brand_id, email, user_email, user_id } = body;
     const targetEmail = (
       email ||
@@ -108,10 +137,11 @@ export async function POST(req: NextRequest) {
 
     // Authorize & update user status in securityDB and accessControl
     let updatedUser: DBUserRecord | undefined;
+    const nowIso = new Date().toISOString();
     if (targetEmail || targetUserId) {
       updatedUser =
         (targetEmail ? securityDB.findUserByEmail(targetEmail) : undefined) ||
-        (targetUserId ? securityDB.users.get(targetUserId) : undefined);
+        (targetUserId ? securityDB.findUserByIdOrIdentifier(targetUserId) : undefined);
 
       if (!updatedUser && targetEmail) {
         updatedUser = {
@@ -126,7 +156,9 @@ export async function POST(req: NextRequest) {
           department: 'Marketing',
           is_approved: true,
           lobby_access: true,
-          created_at: new Date().toISOString(),
+          created_at: nowIso,
+          updated_at: nowIso,
+          version: 1,
         };
         securityDB.users.set(updatedUser.id, updatedUser);
       } else if (updatedUser) {
@@ -134,6 +166,8 @@ export async function POST(req: NextRequest) {
         updatedUser.lobby_access = true;
         updatedUser.brand_id = burned.brand_id;
         updatedUser.brand_name = burned.brand_name || updatedUser.brand_name;
+        updatedUser.updated_at = nowIso;
+        updatedUser.version = (updatedUser.version || 1) + 1;
         securityDB.users.set(updatedUser.id, updatedUser);
       }
 
@@ -163,6 +197,8 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    await securityDB.saveToCloud();
+
     const accessStatus = updatedUser
       ? getAccessStatus(updatedUser.id, updatedUser.email)
       : null;
@@ -182,6 +218,8 @@ export async function POST(req: NextRequest) {
             department: updatedUser.department,
             is_approved: updatedUser.is_approved,
             lobby_access: updatedUser.lobby_access,
+            version: updatedUser.version || 1,
+            updated_at: updatedUser.updated_at || nowIso,
           }
         : null,
       access_status: accessStatus,
